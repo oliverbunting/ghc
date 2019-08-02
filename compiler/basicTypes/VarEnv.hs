@@ -165,7 +165,7 @@ varSetInScope vars (InScope s1 _) = vars `subVarSet` s1
 
 -- | @uniqAway in_scope v@ finds a unique that is not used in the
 -- in-scope set, and gives that to v.
-uniqAway :: InScopeSet -> Var -> Var
+uniqAway :: HasDebugCallStack => InScopeSet -> Var -> Var
 -- It starts with v's current unique, of course, in the hope that it won't
 -- have to change, and thereafter uses a combination of that and the hash-code
 -- found in the in-scope set
@@ -173,7 +173,7 @@ uniqAway in_scope var
   | var `elemInScopeSet` in_scope = uniqAway' in_scope var      -- Make a new one
   | otherwise                     = var                         -- Nothing to do
 
-uniqAway' :: InScopeSet -> Var -> Var
+uniqAway' :: HasDebugCallStack => InScopeSet -> Var -> Var
 -- This one *always* makes up a new variable
 uniqAway' (InScope set n) var
   = try 1
