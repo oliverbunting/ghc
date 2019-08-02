@@ -188,7 +188,7 @@ uniqAway' (InScope set n) var
             setVarUnique var uniq
           | otherwise = setVarUnique var uniq
           where
-            msg  = ppr k <+> text "tries" <+> ppr var <+> int n
+            msg  = ppr k <+> text "tries" <+> ppr var <+> int n $$ ppr set
             uniq = deriveUnique orig_unique (n * k)
 
 {-
