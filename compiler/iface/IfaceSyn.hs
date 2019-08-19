@@ -341,7 +341,7 @@ data IfaceIdInfo
 data IfaceInfoItem
   = HsArity         Arity
   | HsStrictness    StrictSig
-  | HsCpr           CprResult
+  | HsCpr           Cpr
   | HsInline        InlinePragma
   | HsUnfold        Bool             -- True <=> isStrongLoopBreaker is true
                     IfaceUnfolding   -- See Note [Expose recursive functions]

@@ -674,10 +674,10 @@ idStrictness id = strictnessInfo (idInfo id)
 setIdStrictness :: Id -> StrictSig -> Id
 setIdStrictness id sig = modifyIdInfo (`setStrictnessInfo` sig) id
 
-idCprInfo       :: Id -> CprResult
+idCprInfo       :: Id -> Cpr
 idCprInfo       id = cprInfo (idInfo id)
 
-setIdCprInfo :: Id -> CprResult -> Id
+setIdCprInfo :: Id -> Cpr -> Id
 setIdCprInfo id cpr = modifyIdInfo (\info -> setCprInfo info cpr) id
 
 zapIdStrictness :: Id -> Id

@@ -260,7 +260,7 @@ data IdInfo
         strictnessInfo  :: StrictSig,
         -- ^ A strictness signature. Digests how a function uses its arguments
         -- if applied to at least 'arityInfo' arguments.
-        cprInfo         :: CprResult,
+        cprInfo         :: Cpr,
         -- ^ Information on whether the function will ultimately return a
         -- freshly allocated constructor when applied to 'arityInfo' arguments.
         demandInfo      :: Demand,
@@ -307,7 +307,7 @@ setDemandInfo info dd = dd `seq` info { demandInfo = dd }
 setStrictnessInfo :: IdInfo -> StrictSig -> IdInfo
 setStrictnessInfo info dd = dd `seq` info { strictnessInfo = dd }
 
-setCprInfo :: IdInfo -> CprResult -> IdInfo
+setCprInfo :: IdInfo -> Cpr -> IdInfo
 setCprInfo info cpr = cpr `seq` info { cprInfo = cpr }
 
 -- | Basic 'IdInfo' that carries no useful information whatsoever

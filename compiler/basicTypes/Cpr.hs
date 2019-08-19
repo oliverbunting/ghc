@@ -1,5 +1,5 @@
 module Cpr (
-    CprResult, topCpr, botCpr, sumCpr, prodCpr, returnsCPR_maybe, seqCprResult,
+    Cpr, topCpr, botCpr, sumCpr, prodCpr, returnsCPR_maybe, seqCpr,
     CprType (..), topCprType, botCprType, prodCprType, sumCprType,
     lubCprType, applyCprTy, abstractCprTy, ensureCprTyArity, trimCprTy
   ) where
@@ -9,61 +9,103 @@ import GhcPrelude
 import BasicTypes
 import Outputable
 import Binary
+import Util
 
---
--- * CprResult
---
+data KnownShape r
+  = Product [r]
+  | Sum !ConTag [r]
+  deriving Eq
+
+seqKnownShape :: (r -> ()) -> KnownShape r -> ()
+seqKnownShape seq_r (Product args) = foldr (seq . seq_r) () args
+seqKnownShape seq_r (Sum _ args)   = foldr (seq . seq_r) () args
 
 -- | The constructed product result lattice.
 --
 -- @
---                    NoCPR
---                    /    \
---             RetProd    RetSum ConTag
---                    \    /
---                    BotCPR
+--      TopCpr
+--        |
+--   RetCpr shape
+--        |
+--      BotCpr
 -- @
-data CprResult = NoCPR          -- ^ Top of the lattice
-               | RetProd        -- ^ Returns a constructor from a product type
-               | RetSum !ConTag -- ^ Returns a constructor from a data type
-               | BotCPR         -- ^ Bottom of the lattice
-               deriving( Eq, Show )
+--
+-- where @shape@ lifts the same lattice over 'KnownShape'.
+data Cpr
+  = TopCpr
+  | RetCpr (KnownShape Cpr)
+  | BotCpr
+  deriving Eq
 
-lubCpr :: CprResult -> CprResult -> CprResult
-lubCpr (RetSum t1) (RetSum t2)
-  | t1 == t2               = RetSum t1
-lubCpr RetProd     RetProd = RetProd
-lubCpr BotCPR      cpr     = cpr
-lubCpr cpr         BotCPR  = cpr
-lubCpr _           _       = NoCPR
+data TerminationFlag
+  = Terminates
+  | MightDiverge
+  deriving Eq
 
-topCpr :: CprResult
-topCpr = NoCPR
+data Termination
+  = TopTermination
+  | Termination TerminationFlag (Maybe (KnownShape Termination))
+  | BotTermination
 
-botCpr :: CprResult
-botCpr = BotCPR
+-- Reasons for design:
+--  * We want to share between Cpr and Termination, so KnownShape
+--  * Cpr is different from Termination in that we give up once one result
+--    isn't constructed
+--  * That is: For Termination we might or might not have nested info,
+--    independent of termination of the current level. This is why Maybe
+--  * Factoring Termination this way (i.e., TerminationFlag x shape) means less
+--    duplication
+-- Alternative: Interleave everything. Looks like this:
+-- data Blub
+--   = NoCpr Termination
+--   | Cpr TerminationFlag (KnownShape Blub)
+--   | BotBlub
+--  + More compact
+--  + No Maybe (well, not here, still in Termination)
+--  + Easier to handle in WW: Termination and Cpr encode compatible shape info
+--    by construction
+--  - Harder to understand: NoCpr means we can still have Termination info
+--  - Spreads Termination stuff between two lattices
+-- ... Probably not such a good idea, after all.
 
-sumCpr :: ConTag -> CprResult
-sumCpr = RetSum
+lubCpr :: Cpr -> Cpr -> Cpr
+lubCpr (RetCpr (Sum t1 args1)) (RetCpr (Sum t2 args2))
+  | t1 == t2
+  = RetCpr (Sum t1 (zipWithEqual "lubCpr" lubCpr args1 args2))
+lubCpr (RetCpr (Product args1)) (RetCpr (Product args2))
+  = RetCpr (Product (zipWithEqual "lubCpr" lubCpr args1 args2))
+lubCpr BotCpr      cpr     = cpr
+lubCpr cpr         BotCpr  = cpr
+lubCpr _           _       = TopCpr
 
-prodCpr :: CprResult
-prodCpr = RetProd
+topCpr :: Cpr
+topCpr = TopCpr
 
-trimCpr :: Bool -> Bool -> CprResult -> CprResult
-trimCpr trim_all trim_sums RetSum{}
-  | trim_all || trim_sums      = NoCPR
-trimCpr trim_all _         RetProd
-  | trim_all                   = NoCPR
+botCpr :: Cpr
+botCpr = BotCpr
+
+sumCpr :: ConTag -> Cpr
+sumCpr t = RetCpr (Sum t [])
+
+prodCpr :: Cpr
+prodCpr = RetCpr (Product [])
+
+trimCpr :: Bool -> Bool -> Cpr -> Cpr
+trimCpr trim_all trim_sums (RetCpr Sum{})
+  | trim_all || trim_sums      = TopCpr
+trimCpr trim_all _         (RetCpr Product{})
+  | trim_all                   = TopCpr
 trimCpr _        _         cpr = cpr
 
-returnsCPR_maybe :: CprResult -> Maybe ConTag
-returnsCPR_maybe (RetSum t)  = Just t
-returnsCPR_maybe RetProd     = Just fIRST_TAG
-returnsCPR_maybe NoCPR       = Nothing
-returnsCPR_maybe BotCPR      = Nothing
+returnsCPR_maybe :: Cpr -> Maybe ConTag
+returnsCPR_maybe (RetCpr (Sum t _)) = Just t
+returnsCPR_maybe (RetCpr Product{}) = Just fIRST_TAG
+returnsCPR_maybe TopCpr             = Nothing
+returnsCPR_maybe BotCpr             = Nothing
 
-seqCprResult :: CprResult -> ()
-seqCprResult cpr = cpr `seq` ()
+seqCpr :: Cpr -> ()
+seqCpr (RetCpr shape) = seqKnownShape seqCpr shape
+seqCpr _              = ()
 
 --
 -- * CprType
@@ -73,9 +115,9 @@ seqCprResult cpr = cpr `seq` ()
 data CprType
   = CprType
   { ct_arty :: !Arity    -- ^ Number of arguments the denoted expression eats
-                          --   before returning the 'ct_cpr'
-  , ct_cpr  :: !CprResult -- ^ 'CprResult' eventually unleashed when applied to
-                          --   'ct_arty' arguments
+                         --   before returning the 'ct_cpr'
+  , ct_cpr  :: !Cpr      -- ^ 'Cpr' eventually unleashed when applied to
+                         --   'ct_arty' arguments
   }
 
 instance Eq CprType where
@@ -123,25 +165,38 @@ ensureCprTyArity n ty@(CprType m _)
 trimCprTy :: Bool -> Bool -> CprType -> CprType
 trimCprTy trim_all trim_sums (CprType arty res) = CprType arty (trimCpr trim_all trim_sums res)
 
-instance Outputable CprResult where
-  ppr NoCPR        = empty
-  ppr (RetSum n)   = char 'm' <> int n
-  ppr RetProd      = char 'm'
-  ppr BotCPR       = char 'b'
+instance Outputable r => Outputable (KnownShape r) where
+  ppr (Sum t fs) = int t <> parens (pprWithCommas ppr fs)
+  ppr (Product fs) = parens (pprWithCommas ppr fs)
+
+instance Outputable Cpr where
+  ppr TopCpr      = empty
+  ppr (RetCpr sh) = char 'm' <> ppr sh
+  ppr BotCpr      = char 'b'
 
 instance Outputable CprType where
   ppr (CprType arty res) = ppr arty <> ppr res
 
-instance Binary CprResult where
-    put_ bh (RetSum n)   = do { putByte bh 0; put_ bh n }
-    put_ bh RetProd      = putByte bh 1
-    put_ bh NoCPR        = putByte bh 2
-    put_ bh BotCPR       = putByte bh 3
+instance Binary r => Binary (KnownShape r) where
+  -- Note that the ConTag is 1-indexed
+  put_ bh (Product fs) = do { put_ bh (0 :: ConTag); put_ bh fs }
+  put_ bh (Sum t fs)   = do { put_ bh t; put_ bh fs}
+  get  bh = do
+    t <- get bh
+    fs <- get bh
+    case (t :: ConTag) of
+      0 -> pure (Product fs)
+      _ -> pure (Sum t fs)
 
-    get  bh = do
-            h <- getByte bh
-            case h of
-              0 -> do { n <- get bh; return (RetSum n) }
-              1 -> return RetProd
-              2 -> return NoCPR
-              _ -> return BotCPR
+instance Binary Cpr where
+  put_ bh (RetCpr sh) = do { putByte bh 0; put_ bh sh }
+  put_ bh TopCpr      = putByte bh 1
+  put_ bh BotCpr      = putByte bh 2
+
+  get  bh = do
+    h <- getByte bh
+    case h of
+      0 -> do { sh <- get bh; return (RetCpr sh) }
+      1 -> return TopCpr
+      2 -> return BotCpr
+      _ -> pprPanic "Binary Cpr: Invalid tag" (int (fromIntegral h))
