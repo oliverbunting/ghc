@@ -36,7 +36,7 @@ import CoreMonad        ( Tick(..), SimplMode(..) )
 import CoreSyn
 import Demand           ( StrictSig(..), dmdTypeDepth, isStrictDmd
                         , mkClosedStrictSig, topDmd, botDiv )
-import Cpr              ( botCpr )
+import Cpr              ( topTerm, botCpr )
 import PprCore          ( pprCoreExpr )
 import CoreUnfold
 import CoreUtils
@@ -447,6 +447,7 @@ prepareRhs mode top_lvl occ info (Cast rhs co)  -- Note [Float coercions]
         ; return (floats, Cast rhs' co) }
   where
     sanitised_info = vanillaIdInfo `setStrictnessInfo` strictnessInfo info
+                                   `setTermInfo`       termInfo info
                                    `setCprInfo`        cprInfo info
                                    `setDemandInfo`     demandInfo info
 
@@ -735,6 +736,7 @@ addLetBndrInfo new_bndr new_arity is_bot new_unf
     info4 | is_bot    = info3
                           `setStrictnessInfo`
                             mkClosedStrictSig (replicate new_arity topDmd) botDiv
+                          `setTermInfo` topTerm -- MightDiverge
                           `setCprInfo` botCpr
           | otherwise = info3
 

@@ -41,7 +41,7 @@ import IdInfo
 import InstEnv
 import Type             ( tidyTopType )
 import Demand           ( appIsBottom, isTopSig, isBottomingSig )
-import Cpr              ( botCpr )
+import Cpr              ( topTerm, botCpr )
 import BasicTypes
 import Name hiding (varName)
 import NameSet
@@ -1190,6 +1190,7 @@ tidyTopIdInfo dflags rhs_tidy_env name orig_rhs tidy_rhs idinfo show_unfold caf_
         `setCafInfo`        caf_info
         `setArityInfo`      arity
         `setStrictnessInfo` final_sig
+        `setTermInfo`       final_term
         `setCprInfo`        final_cpr
         `setUnfoldingInfo`  minimal_unfold_info  -- See note [Preserve evaluatedness]
                                                  -- in CoreTidy
@@ -1199,6 +1200,7 @@ tidyTopIdInfo dflags rhs_tidy_env name orig_rhs tidy_rhs idinfo show_unfold caf_
         `setCafInfo`           caf_info
         `setArityInfo`         arity
         `setStrictnessInfo`    final_sig
+        `setTermInfo`          final_term
         `setCprInfo`           final_cpr
         `setOccInfo`           robust_occ_info
         `setInlinePragInfo`    (inlinePragInfo idinfo)
@@ -1222,6 +1224,12 @@ tidyTopIdInfo dflags rhs_tidy_env name orig_rhs tidy_rhs idinfo show_unfold caf_
               -- try a cheap-and-cheerful bottom analyser
               | Just (_, nsig) <- mb_bot_str = nsig
               | otherwise                    = sig
+
+    term = termInfo idinfo
+    final_term | Just _ <- mb_bot_str
+               = topTerm -- note that this corresponds to MightDiverge
+               | otherwise
+               = term
 
     cpr = cprInfo idinfo
     final_cpr | Just _ <- mb_bot_str

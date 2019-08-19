@@ -341,6 +341,7 @@ data IfaceIdInfo
 data IfaceInfoItem
   = HsArity         Arity
   | HsStrictness    StrictSig
+  | HsTerm          Termination
   | HsCpr           Cpr
   | HsInline        InlinePragma
   | HsUnfold        Bool             -- True <=> isStrongLoopBreaker is true
@@ -1340,6 +1341,7 @@ instance Outputable IfaceInfoItem where
   ppr (HsInline prag)       = text "Inline:" <+> ppr prag
   ppr (HsArity arity)       = text "Arity:" <+> int arity
   ppr (HsStrictness str)    = text "Strictness:" <+> pprIfaceStrictSig str
+  ppr (HsTerm term)         = text "Term:" <+> ppr term
   ppr (HsCpr cpr)           = text "CPR:" <+> ppr cpr
   ppr HsNoCafRefs           = text "HasNoCafRefs"
   ppr HsLevity              = text "Never levity-polymorphic"
@@ -2115,6 +2117,7 @@ instance Binary IfaceInfoItem where
     put_ bh HsNoCafRefs           = putByte bh 4
     put_ bh HsLevity              = putByte bh 5
     put_ bh (HsCpr cpr)           = putByte bh 6 >> put_ bh cpr
+    put_ bh (HsTerm term)         = putByte bh 7 >> put_ bh term
     get bh = do
         h <- getByte bh
         case h of
@@ -2126,7 +2129,9 @@ instance Binary IfaceInfoItem where
             3 -> liftM HsInline $ get bh
             4 -> return HsNoCafRefs
             5 -> return HsLevity
-            _ -> HsCpr <$> get bh
+            6 -> HsCpr <$> get bh
+            7 -> HsTerm <$> get bh
+            _ -> pprPanic "Binary IfaceInfoItem: Invalid tag" (int (fromIntegral h))
 
 instance Binary IfaceUnfolding where
     put_ bh (IfCoreUnfold s e) = do

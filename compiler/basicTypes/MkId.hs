@@ -411,7 +411,7 @@ mkDictSelId name clas
     base_info = noCafIdInfo
                 `setArityInfo`          1
                 `setStrictnessInfo`     strict_sig
-                `setCprInfo`            topCpr
+                -- `setTermInfo`           whnfTerm -- Nope, depends on impl
                 `setLevityInfoWithType` sel_ty
 
     info | new_tycon
@@ -1219,15 +1219,18 @@ mkPrimOpId prim_op
                          (AnId id) UserSyntax
     id   = mkGlobalId (PrimOpId prim_op) name ty info
 
+    term | primOpIsCheap prim_op = whnfTerm
+         | otherwise             = topTerm
+
     -- PrimOps don't ever construct a product, but we want to preserve bottoms
-    cpr
-      | isBotDiv (snd (splitStrictSig strict_sig)) = botCpr
-      | otherwise                                  = topCpr
+    cpr | isBotDiv (snd (splitStrictSig strict_sig)) = botCpr
+        | otherwise                                  = topCpr
 
     info = noCafIdInfo
            `setRuleInfo`           mkRuleInfo (maybeToList $ primOpRules name prim_op)
            `setArityInfo`          arity
            `setStrictnessInfo`     strict_sig
+           `setTermInfo`           term
            `setCprInfo`            cpr
            `setInlinePragInfo`     neverInlinePragma
            `setLevityInfoWithType` res_ty
@@ -1261,7 +1264,6 @@ mkFCallId dflags uniq fcall ty
     info = noCafIdInfo
            `setArityInfo`          arity
            `setStrictnessInfo`     strict_sig
-           `setCprInfo`            topCpr
            `setLevityInfoWithType` ty
 
     (bndrs, _) = tcSplitPiTys ty

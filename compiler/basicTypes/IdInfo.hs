@@ -40,6 +40,7 @@ module IdInfo (
 
         -- ** Demand and strictness Info
         strictnessInfo, setStrictnessInfo,
+        termInfo, setTermInfo,
         cprInfo, setCprInfo,
         demandInfo, setDemandInfo, pprStrictness,
 
@@ -112,6 +113,7 @@ infixl  1 `setRuleInfo`,
           `setOccInfo`,
           `setCafInfo`,
           `setStrictnessInfo`,
+          `setTermInfo`,
           `setCprInfo`,
           `setDemandInfo`,
           `setNeverLevPoly`,
@@ -260,6 +262,9 @@ data IdInfo
         strictnessInfo  :: StrictSig,
         -- ^ A strictness signature. Digests how a function uses its arguments
         -- if applied to at least 'arityInfo' arguments.
+        termInfo        :: Termination,
+        -- ^ Deep information on whether the function or any of the returned
+        -- components will terminate fast when applied to 'arityInfo' arguments.
         cprInfo         :: Cpr,
         -- ^ Information on whether the function will ultimately return a
         -- freshly allocated constructor when applied to 'arityInfo' arguments.
@@ -307,6 +312,9 @@ setDemandInfo info dd = dd `seq` info { demandInfo = dd }
 setStrictnessInfo :: IdInfo -> StrictSig -> IdInfo
 setStrictnessInfo info dd = dd `seq` info { strictnessInfo = dd }
 
+setTermInfo :: IdInfo -> Termination -> IdInfo
+setTermInfo info term = term `seq` info { termInfo = term }
+
 setCprInfo :: IdInfo -> Cpr -> IdInfo
 setCprInfo info cpr = cpr `seq` info { cprInfo = cpr }
 
@@ -323,6 +331,7 @@ vanillaIdInfo
             occInfo             = noOccInfo,
             demandInfo          = topDmd,
             strictnessInfo      = nopSig,
+            termInfo            = topTerm,
             cprInfo             = topCpr,
             callArityInfo       = unknownArity,
             levityInfo          = NoLevityInfo
