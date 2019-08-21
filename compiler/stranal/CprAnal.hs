@@ -27,6 +27,10 @@ import Maybes           ( isJust )
 -- * Analysing programs
 --
 
+-- | A way to get 'HeadStr' without breaking the abstraction
+headStr :: StrDmd
+headStr = getStrDmd cleanEvalDmd
+
 cprAnalProgram :: FamInstEnvs -> CoreProgram -> CoreProgram
 cprAnalProgram fam_envs binds
   = snd $ mapAccumL cprAnalTopBind (emptyAnalEnv fam_envs) binds
@@ -38,115 +42,131 @@ cprAnalTopBind :: AnalEnv
 cprAnalTopBind env (NonRec id rhs)
   = (extendAnalEnv env id' (get_idCprInfo id'), NonRec id' rhs')
   where
-    (id', rhs') = cprAnalBind TopLevel env id rhs
+    (id', rhs') = cprAnalBind TopLevel env headStr id rhs
 
 cprAnalTopBind env (Rec pairs)
   = (env', Rec pairs')
   where
-    (env', pairs') = cprFix TopLevel env pairs
+    (env', pairs') = cprFix TopLevel env headStr pairs
 
 --
 -- * Analysing expressions
 --
 
--- | The abstract semantic function ⟦_⟧ : Expr -> Env -> A from
+-- | Analoguous to the abstract semantic function ⟦_⟧ : Expr -> Env -> A from
 -- "Constructed Product Result Analysis for Haskell"
 cprAnal, cprAnal'
   :: AnalEnv
+  -> StrDmd              -- ^ How deeply we are obligued to evaluate this expr
   -> CoreExpr            -- ^ expression to be denoted by a 'CprType'
   -> (CprType, CoreExpr) -- ^ the updated expression and its 'CprType'
 
-cprAnal env e = -- pprTraceWith "cprAnal" (\res -> ppr (fst (res)) $$ ppr e) $
-                  cprAnal' env e
+cprAnal env str e = -- pprTraceWith "cprAnal" (\res -> ppr (fst (res)) $$ ppr e) $
+                    cprAnal' env str e
 
-cprAnal' _ (Lit lit)     = (topCprType, Lit lit)
-cprAnal' _ (Type ty)     = (topCprType, Type ty)      -- Doesn't happen, in fact
-cprAnal' _ (Coercion co) = (topCprType, Coercion co)
+cprAnal' _ _ (Lit lit)     = (topCprType, Lit lit)
+cprAnal' _ _ (Type ty)     = (topCprType, Type ty)      -- Doesn't happen, in fact
+cprAnal' _ _ (Coercion co) = (topCprType, Coercion co)
 
-cprAnal' env (Var var)   = (cprTransform env var, Var var)
+cprAnal' env str (Var var)   = (cprTransform env str var, Var var)
 
-cprAnal' env (Cast e co)
+cprAnal' env str (Cast e co)
   = (cpr_ty, Cast e' co)
   where
-    (cpr_ty, e') = cprAnal env e
+    (cpr_ty, e') = cprAnal env str e
 
-cprAnal' env (Tick t e)
+cprAnal' env str (Tick t e)
   = (cpr_ty, Tick t e')
   where
-    (cpr_ty, e') = cprAnal env e
+    (cpr_ty, e') = cprAnal env str e
 
-cprAnal' env (App fun (Type ty))
+cprAnal' env str (App fun (Type ty))
   = (fun_ty, App fun' (Type ty))
   where
-    (fun_ty, fun') = cprAnal env fun
+    (fun_ty, fun') = cprAnal env str fun
 
-cprAnal' env (App fun arg)
+cprAnal' env _ (App fun arg)
   = (res_ty, App fun' arg')
   where
-    (fun_ty, fun') = cprAnal env fun
+    (fun_ty, fun')    = cprAnal env str fun
     -- In contrast to DmdAnal, there is no useful (non-nested) CPR info to be
     -- had by looking into the CprType of arg.
-    (_, arg')      = cprAnal env arg
-    res_ty         = applyCprTy fun_ty
-
-cprAnal' env (Lam var body)
+    -- TODO: termination?! Depends on strictness? Yes... Write a Note about it
+    --       NB: For applications it's strictness only, because the transformer
+    --           of the head will assume <L,U> by default for arguments, unless
+    --           idDemandInfo says otherwise, in which case we have to take care
+    --           to properly force arguments.
+    (arg_str, fun_ty') = applyCprTy fun_ty
+    (shell, str)       = toStrDmd (arg_str :: ArgStr)
+    -- TODO: extract arity from strictness demand, post process result
+    (arg_ty, arg')     = cprAnal env str arg
+    -- I don't think postProcess is a good name. It should rather be 'multiply'
+    res_ty             = fun_ty' `bothCprType` postProcessCprType shell arg_ty
+cprAnal' env str (Lam var body)
   | isTyVar var
-  , (body_ty, body') <- cprAnal env body
+  , (body_ty, body') <- cprAnal env str body
   = (body_ty, Lam var body')
   | otherwise
   = (lam_ty, Lam var body')
   where
-    env'             = extendSigsWithLam env var
-    (body_ty, body') = cprAnal env' body
-    lam_ty           = abstractCprTy body_ty
+    env'              = extendSigsWithLam env var
+    (body_str, shell) = peelStrCall str
+    (body_ty, body') = cprAnal env' body_str body
+    lam_ty           = case shell of
+      Lazy  -> topCprType -- TODO Actually Terminates
+      Str _ -> abstractCprTy (getStrDmd (idDemandInfo var)) body_ty
 
-cprAnal' env (Case scrut case_bndr ty alts)
+cprAnal' env str (Case scrut case_bndr ty alts)
   = (res_ty, Case scrut' case_bndr ty alts')
   where
-    (_, scrut')      = cprAnal env scrut
-    -- Regardless whether scrut had the CPR property or not, the case binder
+    (_, scrut_str)   = toStrDmd (getStrDmd (idDemandInfo case_bndr))
+    (_, scrut')      = cprAnal env scrut_str scrut
+    -- Regardless of whether scrut had the CPR property or not, the case binder
     -- certainly has it. See 'extendEnvForDataAlt'.
-    (alt_tys, alts') = mapAndUnzip (cprAnalAlt env scrut case_bndr) alts
+    (alt_tys, alts') = mapAndUnzip (cprAnalAlt env str scrut case_bndr) alts
     res_ty           = foldl' lubCprType botCprType alt_tys
 
-cprAnal' env (Let (NonRec id rhs) body)
+cprAnal' env str (Let (NonRec id rhs) body)
   = (body_ty, Let (NonRec id' rhs') body')
   where
-    (id', rhs')      = cprAnalBind NotTopLevel env id rhs
+    (id', rhs')      = cprAnalBind NotTopLevel env str id rhs
     env'             = extendAnalEnv env id' (get_idCprInfo id')
-    (body_ty, body') = cprAnal env' body
+    (body_ty, body') = cprAnal env' str body
 
-cprAnal' env (Let (Rec pairs) body)
+cprAnal' env str (Let (Rec pairs) body)
   = body_ty `seq` (body_ty, Let (Rec pairs') body')
   where
-    (env', pairs')   = cprFix NotTopLevel env pairs
-    (body_ty, body') = cprAnal env' body
+    (env', pairs')   = cprFix NotTopLevel env str pairs
+    (body_ty, body') = cprAnal env' str body
 
 cprAnalAlt
   :: AnalEnv
-  -> CoreExpr -- ^ scrutinee
-  -> Id       -- ^ case binder
-  -> Alt Var  -- ^ current alternative
+  -> StrDmd         -- ^ How deeply we are obligued to evaluate this expr
+  -> CoreExpr       -- ^ scrutinee
+  -> Id             -- ^ case binder
+  -> Alt Var        -- ^ current alternative
   -> (CprType, Alt Var)
-cprAnalAlt env scrut case_bndr (con@(DataAlt dc),bndrs,rhs)
+cprAnalAlt env str scrut case_bndr (con@(DataAlt dc),bndrs,rhs)
   -- See 'extendEnvForDataAlt' and Note [CPR in a DataAlt case alternative]
   = (rhs_ty, (con, bndrs, rhs'))
   where
     env_alt        = extendEnvForDataAlt env scrut case_bndr dc bndrs
-    (rhs_ty, rhs') = cprAnal env_alt rhs
-cprAnalAlt env _ _ (con,bndrs,rhs)
+    (rhs_ty, rhs') = cprAnal env_alt str rhs
+cprAnalAlt env str _ _ (con,bndrs,rhs)
   = (rhs_ty, (con, bndrs, rhs'))
   where
-    (rhs_ty, rhs') = cprAnal env rhs
+    (rhs_ty, rhs') = cprAnal env str rhs
 
 --
 -- * CPR transformer
 --
 
-cprTransform :: AnalEnv         -- ^ The analysis environment
-             -> Id              -- ^ The function
-             -> CprType         -- ^ The demand type of the function
-cprTransform env id
+cprTransform
+  :: AnalEnv         -- ^ The analysis environment
+  -> StrDmd          -- ^ How deeply we are obligued to evaluate this expr
+  -> Id              -- ^ The function
+  -> CprType         -- ^ The demand type of the function
+cprTransform env _ id
   = -- pprTrace "cprTransform" (vcat [ppr id, ppr sig])
     sig
   where
@@ -163,16 +183,17 @@ cprTransform env id
 --
 
 -- Recursive bindings
-cprFix :: TopLevelFlag
-       -> AnalEnv                            -- Does not include bindings for this binding
-       -> [(Id,CoreExpr)]
-       -> (AnalEnv, [(Id,CoreExpr)]) -- Binders annotated with stricness info
-
-cprFix top_lvl env orig_pairs
+cprFix
+  :: TopLevelFlag
+  -> AnalEnv                    -- Does not include bindings for this binding
+  -> StrDmd
+  -> [(Id,CoreExpr)]
+  -> (AnalEnv, [(Id,CoreExpr)]) -- Binders annotated with stricness info
+cprFix top_lvl env str orig_pairs
   = loop 1 initial_pairs
   where
     -- See Note [Initialising strictness] in DmdAnal.hs
-    initial_pairs | ae_virgin env = [(setIdCprInfo id botCpr, rhs) | (id, rhs) <- orig_pairs ]
+    initial_pairs | ae_virgin env = [(id `setIdCprInfo` botCpr `setIdTermInfo` botTerm, rhs) | (id, rhs) <- orig_pairs ]
                   | otherwise     = orig_pairs
 
     -- The fixed-point varies the idCprInfo field of the binders, and terminates if that
@@ -201,7 +222,7 @@ cprFix top_lvl env orig_pairs
         my_downRhs env (id,rhs)
           = (env', (id', rhs'))
           where
-            (id', rhs') = cprAnalBind top_lvl env id rhs
+            (id', rhs') = cprAnalBind top_lvl env str id rhs
             env'        = extendAnalEnv env id (get_idCprInfo id')
 
 -- | Process the RHS of the binding for a sensible arity, add the CPR signature
@@ -209,13 +230,16 @@ cprFix top_lvl env orig_pairs
 cprAnalBind
   :: TopLevelFlag
   -> AnalEnv
+  -> StrDmd
   -> Id
   -> CoreExpr
   -> (Id, CoreExpr)
-cprAnalBind top_lvl env id rhs
+cprAnalBind top_lvl env str id rhs
   = (id', rhs')
   where
-    (rhs_ty, rhs')  = cprAnal env rhs
+    (rhs_ty, rhs')
+      | isJoinId id = cprAnal env (mkSCalls (idArity id) str)     rhs
+      | otherwise   = cprAnal env (mkSCalls (idArity id) headStr) rhs
     -- ct_arty rhs_ty might be greater than rhs_arty, so we have to trim it
     -- down. The same situation occurs in DmdAnal; see
     -- Note [Understanding DmdType and StrictSig] in Demand
@@ -337,10 +361,10 @@ extendEnvForDataAlt env scrut case_bndr dc bndrs
     is_var _          = False
 
 set_idCprInfo :: Id -> CprType -> Id
-set_idCprInfo id ty = setIdCprInfo id (ct_cpr ty)
+set_idCprInfo id ty = id `setIdCprInfo` ct_cpr ty `setIdTermInfo` ct_term ty
 
 get_idCprInfo :: Id -> CprType
-get_idCprInfo id = CprType (idArity id) (idCprInfo id)
+get_idCprInfo id = CprType (map getStrDmd $ fst $ splitStrictSig $ idStrictness id) (idCprInfo id) (idTermInfo id)
 
 {- Note [Safe abortion in the fixed-point iteration]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
