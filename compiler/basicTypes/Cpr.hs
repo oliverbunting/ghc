@@ -7,7 +7,7 @@ module Cpr (
     Termination, topTerm, botTerm, whnfTerm, prodTerm, sumTerm,
     CprType (..), topCprType, botCprType, prodCprType, sumCprType,
     markProdCprType, markSumCprType, lubCprType, applyCprTy, abstractCprTy,
-    abstractCprTyNTimes, ensureCprTyArity, trimCprTy, forceCprTy, bothCprType
+    abstractCprTyNTimes, ensureCprTyArity, trimCprTy, forceCprTy, forceTerm, bothCprType
   ) where
 
 #include "HsVersions.h"
@@ -142,6 +142,12 @@ lubTerm (Termination l1) (Termination l2)
       liftTermination' (lubTermFlag tm1 tm2)
                        (lubLevitated (lubKnownShape lubTerm) l_sh1 l_sh2)
 
+splitTermination :: Termination -> Termination'
+-- Basically the inverse to liftTermination', I guess?!
+splitTermination (Termination Top)                = (topTermFlag, Top)
+splitTermination (Termination Bot)                = (botTermFlag, Bot)
+splitTermination (Termination (Levitate (tm, l))) = (tm, l)
+
 -- Reasons for design:
 --  * We want to share between Cpr and Termination, so KnownShape
 --  * Cpr is different from Termination in that we give up once one result
@@ -206,10 +212,27 @@ trimCpr trim_all _         (Cpr (Levitate Product{}))
   | trim_all                   = topCpr
 trimCpr _        _         cpr = cpr
 
-returnsCPR_maybe :: Cpr -> Maybe ConTag
-returnsCPR_maybe (Cpr (Levitate (Sum t _))) = Just t
-returnsCPR_maybe (Cpr (Levitate Product{})) = Just fIRST_TAG
-returnsCPR_maybe _                          = Nothing
+returnsCPR_maybe :: Termination -> Cpr -> Maybe (ConTag, [Termination], [Cpr])
+returnsCPR_maybe term (Cpr (Levitate (Sum t cprs)))
+  | Terminates <- tm = Just (t, terms, cprs)
+  where
+    (tm, l_sh) = splitTermination term
+    terms = case l_sh of
+      Bot                     -> zipWith const (repeat botTerm) cprs
+      Levitate (Sum t2 terms) -> ASSERT( t == t2 )
+                                 ASSERT( cprs `equalLength` terms )
+                                 terms
+      _                       -> zipWith const (repeat topTerm) cprs
+returnsCPR_maybe term (Cpr (Levitate (Product cprs)))
+  | Terminates <- tm = Just (fIRST_TAG, terms, cprs)
+  where
+    (tm, l_sh) = splitTermination term
+    terms = case l_sh of
+      Bot                      -> zipWith const (repeat botTerm) cprs
+      Levitate (Product terms) -> ASSERT( cprs `equalLength` terms )
+                                  terms
+      _                        -> zipWith const (repeat topTerm) cprs
+returnsCPR_maybe _ _                          = Nothing
 
 seqCpr :: Cpr -> ()
 seqCpr (Cpr l) = seqLevitated (seqKnownShape seqCpr) l
@@ -329,15 +352,15 @@ forceCprTy arg_str ty = force_term_ty (toStrDmd arg_str) ty
     force_term_ty (Lazy, _) ty = (botTermFlag, ty)
     force_term_ty (_, str) (CprType 0 cpr term) = (flag, CprType 0 cpr term')
       where
-        (flag, term') = force_term (Str str) term
+        (flag, term') = forceTerm (Str str) term
     force_term_ty (_, str) ty = (flag, abstractCprTy ty')
       where
         (flag, ty') = force_term_ty (swap (peelStrCall str)) (applyCprTy ty)
 
-    force_term :: ArgStr -> Termination -> (TerminationFlag, Termination)
-    force_term arg_str (Termination l) = (flag, Termination l')
-      where
-        (flag, l') = force_term' arg_str l
+forceTerm :: ArgStr -> Termination -> (TerminationFlag, Termination)
+forceTerm arg_str (Termination l) = (flag, Termination l')
+  where
+    (flag, l') = force_term' arg_str l
 
     force_term' :: ArgStr -> Levitated Termination' -> (TerminationFlag, Levitated Termination')
     force_term' _                  Bot                   = (botTermFlag, Bot) -- everything Terminates anyway
@@ -355,12 +378,12 @@ forceCprTy arg_str ty = force_term_ty (toStrDmd arg_str) ty
     force_shape arg_strs Top = force_shape arg_strs (Levitate (Product (repeat topTerm)))
     force_shape arg_strs (Levitate (Product arg_terms)) = (lubTermFlags flags, sh')
       where
-        (flags, shs') = unzip (zipWith force_term arg_strs arg_terms)
+        (flags, shs') = unzip (zipWith forceTerm arg_strs arg_terms)
         sh' -- Yuck, we should have smart constructor for that
           | all (== topTerm) shs' = Top
           | all (== botTerm) shs' = Bot
           | otherwise             = Levitate (Product shs')
-    force_shape _        sh                   = (botTermFlag, sh) -- We don't currently record strictness in Sums, so no need to force.
+    force_shape _        sh       = (botTermFlag, sh) -- We don't currently record strictness in Sums, so no need to force.
 
 -- | 'lubTerm's the given outer @TerminationFlag@ on the @CprType@s 'ct_term'.
 bothCprType :: CprType -> TerminationFlag -> CprType

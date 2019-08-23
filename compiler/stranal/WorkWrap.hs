@@ -460,7 +460,7 @@ tryWW dflags fam_envs is_rec fn_id rhs
         -- See Note [Don't w/w inline small non-loop-breaker things]
 
   | is_fun && is_eta_exp
-  = splitFun dflags fam_envs new_fn_id fn_info wrap_dmds div cpr_info rhs
+  = splitFun dflags fam_envs new_fn_id fn_info wrap_dmds div term_info cpr_info rhs
 
   | is_thunk                                   -- See Note [Thunk splitting]
   = splitThunk dflags fam_envs is_rec new_fn_id rhs
@@ -471,6 +471,7 @@ tryWW dflags fam_envs is_rec fn_id rhs
   where
     fn_info      = idInfo fn_id
     (wrap_dmds, div) = splitStrictSig (strictnessInfo fn_info)
+    term_info    = termInfo fn_info
     cpr_info     = cprInfo fn_info
 
     new_fn_id = zapIdUsedOnceInfo (zapIdUsageEnvInfo fn_id)
@@ -555,12 +556,12 @@ See https://gitlab.haskell.org/ghc/ghc/merge_requests/312#note_192064.
 
 
 ---------------------
-splitFun :: DynFlags -> FamInstEnvs -> Id -> IdInfo -> [Demand] -> Divergence -> Cpr -> CoreExpr
+splitFun :: DynFlags -> FamInstEnvs -> Id -> IdInfo -> [Demand] -> Divergence -> Termination -> Cpr -> CoreExpr
          -> UniqSM [(Id, CoreExpr)]
-splitFun dflags fam_envs fn_id fn_info wrap_dmds div cpr_info rhs
-  = WARN( not (wrap_dmds `lengthIs` arity), ppr fn_id <+> (ppr arity $$ ppr wrap_dmds $$ ppr cpr_info) ) do
+splitFun dflags fam_envs fn_id fn_info wrap_dmds div term_info cpr_info rhs
+  = WARN( not (wrap_dmds `lengthIs` arity), ppr fn_id <+> (ppr arity $$ ppr wrap_dmds $$ ppr term_info $$ ppr cpr_info) ) do
     -- The arity should match the signature
-    stuff <- mkWwBodies dflags fam_envs rhs_fvs fn_id wrap_dmds use_cpr_info
+    stuff <- mkWwBodies dflags fam_envs rhs_fvs fn_id wrap_dmds use_term_info use_cpr_info
     case stuff of
       Just (work_demands, join_arity, wrap_fn, work_fn) -> do
         work_uniq <- getUniqueM
@@ -598,6 +599,8 @@ splitFun dflags fam_envs fn_id fn_info wrap_dmds div cpr_info rhs
                         `setIdStrictness` mkClosedStrictSig work_demands div
                                 -- Even though we may not be at top level,
                                 -- it's ok to give it an empty DmdEnv
+
+                        `setIdTermInfo` work_term_info
 
                         `setIdCprInfo` work_cpr_info
 
@@ -652,6 +655,11 @@ splitFun dflags fam_envs fn_id fn_info wrap_dmds div cpr_info rhs
     arity           = arityInfo fn_info
                     -- The arity is set by the simplifier using exprEtaExpandArity
                     -- So it may be more than the number of top-level-visible lambdas
+
+    use_term_info  | isJoinId fn_id = topTerm -- Note [Don't CPR join points]
+                   | otherwise      = term_info
+    work_term_info | isJoinId fn_id = term_info -- Worker keep termination properties
+                   | otherwise      = topTerm   -- Cpr was done by wrapper; Easiest to kill Termination info
 
     use_cpr_info  | isJoinId fn_id = topCpr -- Note [Don't CPR join points]
                   | otherwise      = cpr_info
