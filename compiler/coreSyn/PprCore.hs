@@ -478,7 +478,7 @@ ppIdInfo id info
     , (has_called_arity, text "CallArity=" <> int called_arity)
     , (has_caf_info,     text "Caf=" <> ppr caf_info)
     , (has_str_info,     text "Str=" <> pprStrictness str_info)
-    , (has_term_info,     text "Term=" <> ppr term_info)
+    , (has_term_info,    text "Term=" <> ppr term_info)
     , (has_cpr_info,     text "Cpr=" <> ppr cpr_info)
     , (has_unf,          text "Unf=" <> ppr unf_info)
     , (not (null rules), text "RULES:" <+> vcat (map pprRule rules))

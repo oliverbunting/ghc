@@ -8,7 +8,7 @@
 {-# LANGUAGE CPP, FlexibleInstances, TypeSynonymInstances, RecordWildCards #-}
 
 module Demand (
-        StrDmd, Str(..), ArgStr, strBot, strTop, UseDmd(..), Count, ArgUse,
+        StrDmd(..), Str(..), ArgStr, strBot, strTop, UseDmd(..), Count, ArgUse,
         peelStrCall, mkSCalls, toStrDmd, glbArgStr,
 
         Demand, DmdShell, CleanDemand, getStrDmd, getUseDmd,
@@ -217,7 +217,7 @@ mkSCall :: StrDmd -> StrDmd
 mkSCall HyperStr = HyperStr
 mkSCall s        = SCall s
 
--- | @mkSCalls n s@ returns @S(S...(S s))@ where there are @n@ @S@'s.
+-- | @mkSCalls n s@ returns @C(C...(s))@ where there are @n@ @S@'s.
 mkSCalls :: Arity -> StrDmd -> StrDmd
 mkSCalls n s = iterate mkSCall s !! n
 

@@ -508,8 +508,6 @@ mkDataConWorkId wkr_name data_con
     alg_wkr_info = noCafIdInfo
                    `setArityInfo`          wkr_arity
                    `setStrictnessInfo`     wkr_sig
-                   `setTermInfo`           dataConTerm data_con
-                   `setCprInfo`            dataConCpr data_con
                    `setUnfoldingInfo`      evaldUnfolding  -- Record that it's evaluated,
                                                            -- even if arity = 0
                    `setLevityInfoWithType` wkr_ty
@@ -554,47 +552,6 @@ mkDataConWorkId wkr_name data_con
                    mkCompulsoryUnfolding $
                    mkLams univ_tvs $ Lam id_arg1 $
                    wrapNewTypeBody tycon res_ty_args (Var id_arg1)
-
-dataConCpr :: DataCon -> Cpr
-dataConCpr con
-  | isDataTyCon tycon     -- Real data types only; that is,
-                          -- not unboxed tuples or newtypes
-  , null (dataConExTyCoVars con)  -- No existentials
-  , wkr_arity > 0
-  , wkr_arity <= mAX_CPR_SIZE
-  = if is_prod then prodCpr
-               else sumCpr (dataConTag con)
-  | otherwise
-  = topCpr
-  where
-    is_prod   = isProductTyCon tycon
-    tycon     = dataConTyCon con
-    wkr_arity = dataConRepArity con
-
-    mAX_CPR_SIZE :: Arity
-    mAX_CPR_SIZE = 10
-    -- We do not treat very big tuples as CPR-ish:
-    --      a) for a start we get into trouble because there aren't
-    --         "enough" unboxed tuple types (a tiresome restriction,
-    --         but hard to fix),
-    --      b) more importantly, big unboxed tuples get returned mainly
-    --         on the stack, and are often then allocated in the heap
-    --         by the caller.  So doing CPR for them may in fact make
-    --         things worse.
-
-dataConTerm :: DataCon -> Termination
-dataConTerm con
-  | isProductTyCon tycon
-  = prodTerm Terminates args
-  | otherwise
-  = sumTerm Terminates (dataConTag con) args
-  where
-    tycon              = dataConTyCon con
-    args               = map go (dataConRepStrictness con)
-    go MarkedStrict    = whnfTerm
-    go NotMarkedStrict = topTerm
-    -- TODO: This isn't actually enough. We have to use custom
-    --       Termination/CPR transformers for each DataCon
 
 {-
 -------------------------------------------------
@@ -668,8 +625,6 @@ mkDataConRep dflags fam_envs wrap_name mb_bangs data_con
                          `setInlinePragInfo`    wrap_prag
                          `setUnfoldingInfo`     wrap_unf
                          `setStrictnessInfo`    wrap_sig
-                         `setTermInfo`          dataConTerm data_con
-                         `setCprInfo`           dataConCpr data_con
                              -- We need to get the CAF info right here because TidyPgm
                              -- does not tidy the IdInfo of implicit bindings (like the wrapper)
                              -- so it not make sure that the CAF info is sane
