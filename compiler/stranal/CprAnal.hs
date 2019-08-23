@@ -192,13 +192,12 @@ cprTransformDataConSig con args
   | otherwise
   = topCprType
   where
-    is_prod   = isProductTyCon tycon
     tycon     = dataConTyCon con
     wkr_arity = dataConRepArity con
     -- Note how we don't handle unlifted args here. That's OK by the let/app
     -- invariant, which specifies that the things we forget to force are ok for
     -- speculation, so exactly what we mean by Terminates.
-    data_con_ty args
+    data_con_cpr_ty args
       | isProductTyCon tycon = prodCprType args
       | otherwise            = sumCprType (dataConTag con) args
 
