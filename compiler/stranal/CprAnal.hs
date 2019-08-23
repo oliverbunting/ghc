@@ -118,7 +118,12 @@ cprAnal' env args (Case scrut case_bndr ty alts)
     -- the case_bndr demand and then bothCprType.
     -- BUT we can also attach the residual Termination info to the case_bndr.
     (scrut_ty, scrut')        = cprAnal env [] scrut
-    scrut_str                 = getStrDmd (idDemandInfo case_bndr)
+    -- FIXME: The case binder only has attached its own strictness, not the
+    --        strictness in which the scrutinee is evaluated. Yikes.
+    -- Plan: evaluate scrutinee in head strictness, or just glb case_bndr demand
+    --       with head strictness. What a mess; if only we had the proper result
+    --       from strictness analysis.
+    scrut_str                 = getStrDmd $ strictifyDmd $ idDemandInfo case_bndr
     (whnf_flag, case_bndr_ty) = forceCprTy scrut_str scrut_ty
     -- Regardless of whether scrut had the CPR property or not, the case binder
     -- certainly has it. See 'extendEnvForDataAlt'.
@@ -228,7 +233,7 @@ cprFix top_lvl env str orig_pairs
   = loop 1 initial_pairs
   where
     -- See Note [Initialising strictness] in DmdAnal.hs
-    initial_pairs | ae_virgin env = [(id `setIdCprInfo` botCpr `setIdTermInfo` botTerm, rhs) | (id, rhs) <- orig_pairs ]
+    initial_pairs | ae_virgin env = [(id `setIdCprInfo` botCpr `setIdTermInfo` recFunTerm, rhs) | (id, rhs) <- orig_pairs ]
                   | otherwise     = orig_pairs
 
     -- The fixed-point varies the idCprInfo field of the binders, and terminates if that

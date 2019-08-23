@@ -4,7 +4,7 @@
 module Cpr (
     Cpr, topCpr, botCpr, sumCpr, prodCpr, returnsCPR_maybe, seqCpr,
     TerminationFlag (..), topTermFlag, botTermFlag,
-    Termination, topTerm, botTerm, whnfTerm, prodTerm, sumTerm,
+    Termination, topTerm, botTerm, whnfTerm, recFunTerm, prodTerm, sumTerm,
     CprType (..), topCprType, botCprType, prodCprType, sumCprType,
     markProdCprType, markSumCprType, lubCprType, applyCprTy, abstractCprTy,
     abstractCprTyNTimes, ensureCprTyArity, trimCprTy, forceCprTy, forceTerm, bothCprType
@@ -117,6 +117,13 @@ deepTerm :: TerminationFlag -> Termination
 deepTerm tm
   | tm == botTermFlag = botTerm
   | otherwise         = Termination (Levitate (tm, Bot))
+
+-- | The initial termination of a recursive function in fixed-point iteration.
+-- We assume a recursive call 'MightDiverge', but are optimistic about all
+-- nested termination information. I.e., we assume that evaluating returned
+-- tuple components 'Terminates' rapidly.
+recFunTerm :: Termination
+recFunTerm = deepTerm MightDiverge
 
 -- Smart contructor for @Termination tm (Just (Product fs))@ that respects the
 -- non-syntactic equalities of @Termination@.
