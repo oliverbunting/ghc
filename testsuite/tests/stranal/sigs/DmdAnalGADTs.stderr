@@ -1,28 +1,40 @@
 
 ==================== Strictness signatures ====================
-DmdAnalGADTs.$tc'A: m
-DmdAnalGADTs.$tc'B: m
-DmdAnalGADTs.$tcD: m
-DmdAnalGADTs.$trModule: m
-DmdAnalGADTs.diverges: bb
-DmdAnalGADTs.f: <S,1*U>
-DmdAnalGADTs.f': <S,1*U>m
-DmdAnalGADTs.g: <S,1*U>
-DmdAnalGADTs.hasCPR: m
-DmdAnalGADTs.hasStrSig: <S,1*U(U)>m
+DmdAnalGADTs.$tc'A: #(*, *, #(#, #), #, *,
+                      #1(#(*, *, #(#, #), #, *, #), #2(#, *))) (-, -, (1(-), 1(-)), 1(-),
+                                                                -, 1(-, -))
+DmdAnalGADTs.$tc'B: #(*, *, #(#, #), #, *,
+                      #1(#(*, *, #(#, #), #, *, #), #2(#4(#, #), *))) (-, -,
+                                                                       (1(-), 1(-)), 1(-), -,
+                                                                       1(-, -))
+DmdAnalGADTs.$tcD: #(*, *, #(#, #), #, *, #) (-, -, (1(-), 1(-)),
+                                              1(-), -, 4)
+DmdAnalGADTs.$trModule: #(#, #) (1(-), 1(-))
+DmdAnalGADTs.diverges: b *(#..) b
+DmdAnalGADTs.f: <S,1*U> * -
+DmdAnalGADTs.f': <S,1*U> * (-)
+DmdAnalGADTs.g: <S,1*U> * -
+DmdAnalGADTs.hasCPR: # (-)
+DmdAnalGADTs.hasStrSig: <S,1*U(U)> # (-)
 
 
 
 ==================== Strictness signatures ====================
-DmdAnalGADTs.$tc'A: m
-DmdAnalGADTs.$tc'B: m
-DmdAnalGADTs.$tcD: m
-DmdAnalGADTs.$trModule: m
-DmdAnalGADTs.diverges: bb
-DmdAnalGADTs.f: <S,1*U>
-DmdAnalGADTs.f': <S,1*U>m
-DmdAnalGADTs.g: <S,1*U>
-DmdAnalGADTs.hasCPR: m
-DmdAnalGADTs.hasStrSig: <S,1*U(U)>m
+DmdAnalGADTs.$tc'A: #(*, *, #(#, #), #, *,
+                      #1(#(*, *, #(#, #), #, *, #), #2(#, *))) (-, -, (1(-), 1(-)), 1(-),
+                                                                -, 1(-, -))
+DmdAnalGADTs.$tc'B: #(*, *, #(#, #), #, *,
+                      #1(#(*, *, #(#, #), #, *, #), #2(#4(#, #), *))) (-, -,
+                                                                       (1(-), 1(-)), 1(-), -,
+                                                                       1(-, -))
+DmdAnalGADTs.$tcD: #(*, *, #(#, #), #, *, #) (-, -, (1(-), 1(-)),
+                                              1(-), -, 4)
+DmdAnalGADTs.$trModule: #(#, #) (1(-), 1(-))
+DmdAnalGADTs.diverges: b *(#..) b
+DmdAnalGADTs.f: <S,1*U> * -
+DmdAnalGADTs.f': <S,1*U> * (-)
+DmdAnalGADTs.g: <S,1*U> * -
+DmdAnalGADTs.hasCPR: # (-)
+DmdAnalGADTs.hasStrSig: <S,1*U(U)> # (-)
 
 

@@ -5,9 +5,10 @@ module Cpr (
     Cpr, topCpr, botCpr, sumCpr, prodCpr, returnsCPR_maybe, seqCpr,
     TerminationFlag (..), topTermFlag, botTermFlag,
     Termination, topTerm, botTerm, whnfTerm, recFunTerm, prodTerm, sumTerm,
-    CprType (..), topCprType, botCprType, prodCprType, sumCprType,
-    markProdCprType, markSumCprType, lubCprType, applyCprTy, abstractCprTy,
-    abstractCprTyNTimes, ensureCprTyArity, trimCprTy, forceCprTy, forceTerm, bothCprType
+    CprType (..), topCprType, botCprType, prodCprType, sumCprType, pruneDeepCpr,
+    pruneDeepTerm, markProdCprType, markSumCprType, lubCprType, applyCprTy,
+    abstractCprTy, abstractCprTyNTimes, ensureCprTyArity, trimCprTy, forceCprTy,
+    forceTerm, bothCprType
   ) where
 
 #include "HsVersions.h"
@@ -62,6 +63,11 @@ lubKnownShape lub_r (Sum t1 args1) (Sum t2 args2)
   = Levitate (Sum t1 (zipWith lub_r args1 args2))
 lubKnownShape _ _ _
   = Top
+
+pruneKnownShape :: (Int -> r -> r) -> Int -> KnownShape r -> Levitated (KnownShape r)
+pruneKnownShape _       0     _              = Top
+pruneKnownShape prune_r depth (Product args) = Levitate (Product (map (prune_r (depth - 1)) args))
+pruneKnownShape prune_r depth (Sum t args)   = Levitate (Sum t   (map (prune_r (depth - 1)) args))
 
 ----------------
 -- * Termination
@@ -149,6 +155,11 @@ lubTerm (Termination l1) (Termination l2)
       liftTermination' (lubTermFlag tm1 tm2)
                        (lubLevitated (lubKnownShape lubTerm) l_sh1 l_sh2)
 
+pruneDeepTerm :: Int -> Termination -> Termination
+pruneDeepTerm depth (Termination (Levitate (tm, Levitate sh)))
+  = Termination (liftTermination' tm (pruneKnownShape pruneDeepTerm depth sh))
+pruneDeepTerm _     term                              = term
+
 splitTermination :: Termination -> Termination'
 -- Basically the inverse to liftTermination', I guess?!
 splitTermination (Termination Top)                = (topTermFlag, Top)
@@ -206,8 +217,9 @@ topCpr = Cpr Top
 botCpr :: Cpr
 botCpr = Cpr Bot
 
+-- no Nested CPR for sums yet
 sumCpr :: ConTag -> [Cpr] -> Cpr
-sumCpr t _args = Cpr (Levitate (Sum t []))
+sumCpr t _args = Cpr (Levitate (Sum t (zipWith const (repeat topCpr) _args)))
 
 prodCpr :: [Cpr] -> Cpr
 prodCpr args = Cpr (Levitate (Product args))
@@ -218,6 +230,10 @@ trimCpr trim_all trim_sums (Cpr (Levitate Sum{}))
 trimCpr trim_all _         (Cpr (Levitate Product{}))
   | trim_all                   = topCpr
 trimCpr _        _         cpr = cpr
+
+pruneDeepCpr :: Int -> Cpr -> Cpr
+pruneDeepCpr depth (Cpr (Levitate sh)) = Cpr (pruneKnownShape pruneDeepCpr depth sh)
+pruneDeepCpr _     cpr                 = cpr
 
 returnsCPR_maybe :: Termination -> Cpr -> Maybe (ConTag, [Termination], [Cpr])
 returnsCPR_maybe term (Cpr (Levitate (Sum t cprs)))
@@ -413,9 +429,7 @@ instance Outputable r => Outputable (KnownShape r) where
   ppr (Product fs) = pprFields fs
 
 pprFields :: Outputable r => [r] -> SDoc
-pprFields fs
-  | let sdoc = pprWithCommas ppr fs
-  = cparen (notNull fs) sdoc
+pprFields fs = parens (pprWithCommas ppr fs)
 
 instance Outputable TerminationFlag where
   ppr MightDiverge = char '*'

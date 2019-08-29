@@ -36,7 +36,7 @@ cprAnalTopBind :: AnalEnv
                -> CoreBind
                -> (AnalEnv, CoreBind)
 cprAnalTopBind env (NonRec id rhs)
-  = (extendAnalEnv env id' (get_idCprInfo id'), NonRec id' rhs')
+  = (extendAnalEnv env id' (get_idCprType id'), NonRec id' rhs')
   where
     (id', rhs') = cprAnalBind TopLevel env [] id rhs
 
@@ -134,7 +134,7 @@ cprAnal' env args (Let (NonRec id rhs) body)
   = (body_ty, Let (NonRec id' rhs') body')
   where
     (id', rhs')      = cprAnalBind NotTopLevel env args id rhs
-    env'             = extendAnalEnv env id' (get_idCprInfo id')
+    env'             = extendAnalEnv env id' (get_idCprType id')
     (body_ty, body') = cprAnal env' args body
 
 cprAnal' env args (Let (Rec pairs) body)
@@ -180,7 +180,7 @@ cprTransform env args id
       | Just con <- isDataConWorkId_maybe id  -- Data constructor
       = cprTransformDataConSig con args
       | isGlobalId id                         -- imported function or data con worker
-      = get_idCprInfo id
+      = get_idCprType id
       | Just sig <- lookupSigEnv env id       -- local let-bound
       = sig
       | otherwise
@@ -193,6 +193,7 @@ cprTransformDataConSig con args
   , wkr_arity > 0
   , wkr_arity <= mAX_CPR_SIZE
   , args `lengthIs` wkr_arity
+  , pprTrace "cprTransformDataConSig" (ppr con <+> ppr wkr_arity <+> ppr args) True
   = abstractCprTyNTimes wkr_arity $ data_con_cpr_ty args
   | otherwise
   = topCprType
@@ -243,7 +244,8 @@ cprFix top_lvl env str orig_pairs
       | found_fixpoint = (final_anal_env, pairs')
       | otherwise      = loop (n+1) pairs'
       where
-        found_fixpoint    = map (idCprInfo . fst) pairs' == map (idCprInfo . fst) pairs
+        found_fixpoint    = selector pairs' == selector pairs
+        selector          = map ((\(id, _) -> (idCprInfo id, idTermInfo id)))
         first_round       = n == 1
         pairs'            = step first_round pairs
         final_anal_env    = extendAnalEnvs env (map fst pairs')
@@ -263,7 +265,7 @@ cprFix top_lvl env str orig_pairs
           = (env', (id', rhs'))
           where
             (id', rhs') = cprAnalBind top_lvl env str id rhs
-            env'        = extendAnalEnv env id (get_idCprInfo id')
+            env'        = extendAnalEnv env id (get_idCprType id')
 
 -- | Process the RHS of the binding for a sensible arity, add the CPR signature
 -- to the Id, and augment the environment with the signature as well.
@@ -306,7 +308,7 @@ cprAnalBind top_lvl env args id rhs
       = ensureCprTyArity (idArity id) rhs_ty
     -- possibly trim thunk CPR info
     sig_ty          = trimCprTy trim_all trim_sums rhs_ty'
-    id'             = set_idCprInfo id sig_ty
+    id'             = set_idCprType id sig_ty
 
     -- See Note [CPR for thunks]
     -- See Note [CPR for sum types]
@@ -347,7 +349,7 @@ extendAnalEnvs :: AnalEnv -> [Id] -> AnalEnv
 extendAnalEnvs env ids
   = env { ae_sigs = sigs' }
   where
-    sigs' = extendVarEnvList (ae_sigs env) [ (id, get_idCprInfo id) | id <- ids ]
+    sigs' = extendVarEnvList (ae_sigs env) [ (id, get_idCprType id) | id <- ids ]
 
 extendAnalEnv :: AnalEnv -> Id -> CprType -> AnalEnv
 extendAnalEnv env id sig
@@ -414,11 +416,17 @@ extendEnvForDataAlt env scrut case_bndr case_bndr_ty dc bndrs
     is_var (Var v)    = isLocalId v
     is_var _          = False
 
-set_idCprInfo :: Id -> CprType -> Id
-set_idCprInfo id ty = id `setIdCprInfo` ct_cpr ty `setIdTermInfo` ct_term ty
+set_idCprType :: Id -> CprType -> Id
+-- TODO: Assert that idArity matches ct_arty?
+set_idCprType id ty = id `setIdCprInfo` cpr `setIdTermInfo` term
+  where
+    -- Some narrowing to ensure termination
+    mAX_DEPTH = 4
+    cpr  = pruneDeepCpr  mAX_DEPTH (ct_cpr  ty)
+    term = pruneDeepTerm mAX_DEPTH (ct_term ty)
 
-get_idCprInfo :: Id -> CprType
-get_idCprInfo id = CprType (idArity id) (idCprInfo id) (idTermInfo id)
+get_idCprType :: Id -> CprType
+get_idCprType id = CprType (idArity id) (idCprInfo id) (idTermInfo id)
 
 {- Note [Safe abortion in the fixed-point iteration]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -1020,6 +1020,7 @@ mkWWcpr opt_CprAnal fam_envs body_ty term cpr
         Nothing -> return (False, id, id, body_ty)
         Just stuff -> do
           (build_wrk, build_wrp, body_ty) <- mkWWcpr_build stuff
+          -- pprTrace "mkWWcpr" (ppr (build_wrk (mkCharExpr 's')) $$ ppr (build_wrp (mkCharExpr 's')) $$ ppr body_ty) (return ())
           return (True, build_wrk, build_wrp, body_ty)
 
 type CprWWBuilder = ([Id], CoreExpr, CoreExpr -> CoreExpr -> CoreExpr)
