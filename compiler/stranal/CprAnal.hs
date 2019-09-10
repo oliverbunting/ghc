@@ -57,7 +57,7 @@ cprAnal, cprAnal'
   -> CoreExpr            -- ^ expression to be denoted by a 'CprType'
   -> (CprType, CoreExpr) -- ^ the updated expression and its 'CprType'
 
-cprAnal env args e = pprTraceWith "cprAnal" (\res -> ppr (fst (res)) $$ ppr e) $
+cprAnal env args e = -- pprTraceWith "cprAnal" (\res -> ppr (fst (res)) $$ ppr e) $
                      cprAnal' env args e
 
 cprAnal' _ _ (Lit lit)     = (topCprType, Lit lit)
@@ -86,14 +86,13 @@ cprAnal' env args (App fun arg)
   where
     -- TODO: Make incoming info a proper lattice, so that it's clear that we
     --       can always cough up another topCprType
-    (arg_ty, arg')    = cprAnal env [] arg
-    (fun_ty, fun')    = cprAnal env (arg_ty:args) fun
-    -- TODO: termination?! Depends on strictness? Yes... Write a Note about it
-    --       NB: For applications it's strictness only, because the transformer
-    --           of the head will assume <L,U> by default for arguments, unless
-    --           idDemandInfo says otherwise, in which case we have to take care
-    --           to properly force arguments.
-    fun_ty' = applyCprTy fun_ty
+    (arg_ty, arg')      = cprAnal env [] arg
+    (fun_ty, fun')      = cprAnal env (arg_ty:args) fun
+    -- We force arg_ty when entering a lambda or when applying a transformer.
+    -- There's no need to force arg_ty after the application, because the
+    -- potential divergence from forcing was already unleashed.
+    -- Hence arg_str below is unused.
+    (_arg_str, fun_ty') = applyCprTy fun_ty
 cprAnal' env args (Lam var body)
   | isTyVar var
   , (body_ty, body') <- cprAnal env args body
@@ -101,14 +100,14 @@ cprAnal' env args (Lam var body)
   | otherwise
   = (lam_ty, Lam var body')
   where
-    env'                 = extendSigsWithLam env var
+    arg_str              = getStrDmd $ idDemandInfo var
     (arg_ty, body_args)
       | ty:args' <- args = (ty, args') -- TODO: Make lattice explicit to see why this makes sense
       | otherwise        = (topCprType, [])
-    (term_flag, _)       = forceCprTy (getStrDmd $ idDemandInfo var) arg_ty
+    (term_flag, arg_ty') = forceCprTy arg_str arg_ty
+    env'                 = extendSigsWithLam env var arg_ty'
     (body_ty, body')     = cprAnal env' body_args body
-    -- We must force 'ty' according to the strictness announced by 'var'.
-    lam_ty               = abstractCprTy body_ty `bothCprType` term_flag
+    lam_ty               = abstractCprTy arg_str body_ty `bothCprType` term_flag
 
 cprAnal' env args (Case scrut case_bndr ty alts)
   = (res_ty, Case scrut' case_bndr ty alts')
@@ -193,13 +192,14 @@ cprTransformDataConSig con args
   , wkr_arity > 0
   , wkr_arity <= mAX_CPR_SIZE
   , args `lengthIs` wkr_arity
-  , pprTrace "cprTransformDataConSig" (ppr con <+> ppr wkr_arity <+> ppr args) True
-  = abstractCprTyNTimes wkr_arity $ data_con_cpr_ty args
+  -- , pprTrace "cprTransformDataConSig" (ppr con <+> ppr wkr_arity <+> ppr args) True
+  = abstractCprTyNTimes arg_strs $ data_con_cpr_ty args
   | otherwise
   = topCprType
   where
     tycon     = dataConTyCon con
     wkr_arity = dataConRepArity con
+    arg_strs  = take wkr_arity (repeat strTop) -- worker is all lazy
     -- Note how we don't handle unlifted args here. That's OK by the let/app
     -- invariant, which specifies that the things we forget to force are ok for
     -- speculation, so exactly what we mean by Terminates.
@@ -364,16 +364,18 @@ nonVirgin env = env { ae_virgin = False }
 dummyArgs :: DataCon -> [CprType]
 dummyArgs dc = take (dataConRepArity dc) (repeat topCprType)
 
-extendSigsWithLam :: AnalEnv -> Id -> AnalEnv
+extendSigsWithLam :: AnalEnv -> Id -> CprType -> AnalEnv
 -- Extend the AnalEnv when we meet a lambda binder
-extendSigsWithLam env id
-  | isId id
-  , isStrictDmd (idDemandInfo id) -- See Note [CPR for strict binders]
-  , Just (dc,_,_,_) <- deepSplitProductType_maybe (ae_fam_envs env) $ idType id
-  -- TODO: Make this deep or otherwise align this with the argument ty
-  = extendAnalEnv env id (prodCprType (dummyArgs dc))
-  | otherwise
-  = env
+extendSigsWithLam env id ty = extendAnalEnv env id ty'
+  where
+    ty'
+      | isId id
+      , isStrictDmd (idDemandInfo id) -- See Note [CPR for strict binders]
+      , Just (dc,_,_,_) <- deepSplitProductType_maybe (ae_fam_envs env) $ idType id
+      -- TODO: Make this deep, depending on the StrDmd
+      = markProdCprType (dummyArgs dc) ty
+      | otherwise
+      = ty
 
 extendEnvForDataAlt :: AnalEnv -> CoreExpr -> Id -> CprType -> DataCon -> [Var] -> AnalEnv
 -- See Note [CPR in a DataAlt case alternative]
@@ -417,7 +419,7 @@ extendEnvForDataAlt env scrut case_bndr case_bndr_ty dc bndrs
     is_var _          = False
 
 set_idCprType :: Id -> CprType -> Id
--- TODO: Assert that idArity matches ct_arty?
+-- TODO: Assert that idArity matches length of idStrictness?
 set_idCprType id ty = id `setIdCprInfo` cpr `setIdTermInfo` term
   where
     -- Some narrowing to ensure termination
@@ -426,7 +428,10 @@ set_idCprType id ty = id `setIdCprInfo` cpr `setIdTermInfo` term
     term = pruneDeepTerm mAX_DEPTH (ct_term ty)
 
 get_idCprType :: Id -> CprType
-get_idCprType id = CprType (idArity id) (idCprInfo id) (idTermInfo id)
+get_idCprType id = CprType arg_strs (idCprInfo id) (idTermInfo id)
+  where
+    (arg_dmds, _) = splitStrictSig (idStrictness id)
+    arg_strs      = map getStrDmd arg_dmds
 
 {- Note [Safe abortion in the fixed-point iteration]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

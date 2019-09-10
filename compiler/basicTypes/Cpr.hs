@@ -272,8 +272,9 @@ seqCpr (Cpr l) = seqLevitated (seqKnownShape seqCpr) l
 -- | The abstract domain \(A_t\) from the original 'CPR for Haskell' paper.
 data CprType
   = CprType
-  { ct_args :: !Arity       -- ^ Number of arguments the denoted expression eats
-                            --   before returning the 'ct_cpr' and 'ct_term'
+  { ct_args :: ![ArgStr]    -- ^ Assumptions about the strictness of incoming
+                            --   arguments, before returning the 'ct_cpr' and
+                            --   'ct_term'
   , ct_cpr  :: !Cpr         -- ^ 'Cpr' eventually unleashed when applied to
                             --   'ct_args' arguments
   , ct_term :: !Termination -- ^ 'Termination' unleashed when applied to
@@ -293,72 +294,75 @@ isUltimatelyBotCprType :: CprType -> Bool
 isUltimatelyBotCprType (CprType _ cpr term) = cpr == botCpr && term == botTerm
 
 topCprType :: CprType
-topCprType = CprType 0 topCpr topTerm
+topCprType = CprType [] topCpr topTerm
 
 botCprType :: CprType
-botCprType = CprType 0 botCpr botTerm
+botCprType = CprType [] botCpr botTerm
 
 prodCprType :: [CprType] -> CprType
-prodCprType args = CprType 0 (prodCpr cprs) (prodTerm Terminates terms)
+prodCprType args = CprType [] (prodCpr cprs) (prodTerm Terminates terms)
   where
     (cprs, terms) = unzip (extractArgCprAndTermination args)
 
 extractArgCprAndTermination :: [CprType] -> [(Cpr, Termination)]
 extractArgCprAndTermination = map go
   where
-    go (CprType 0 cpr term) = (cpr, term)
+    go (CprType [] cpr term) = (cpr, term)
     -- we didn't give it enough arguments, so terminates rapidly
     go _                    = (topCpr, whnfTerm)
 
 sumCprType :: ConTag -> [CprType] -> CprType
-sumCprType con_tag args = CprType 0 (sumCpr con_tag cprs) (sumTerm Terminates con_tag terms)
+sumCprType con_tag args = CprType [] (sumCpr con_tag cprs) (sumTerm Terminates con_tag terms)
   where
     (cprs, terms) = unzip (extractArgCprAndTermination args)
 
 
 markProdCprType :: [CprType] -> CprType -> CprType
-markProdCprType args ty = ASSERT( 0 == ct_args ty ) ty { ct_cpr = prodCpr cprs }
+markProdCprType args ty = ASSERT( null (ct_args ty) ) ty { ct_cpr = prodCpr cprs }
   where
     cprs = map fst (extractArgCprAndTermination args)
 
 markSumCprType :: ConTag -> [CprType] -> CprType -> CprType
-markSumCprType con_tag args ty = ASSERT( ct_args ty == 0 ) ty { ct_cpr = sumCpr con_tag cprs }
+markSumCprType con_tag args ty = ASSERT( null (ct_args ty) ) ty { ct_cpr = sumCpr con_tag cprs }
   where
     cprs = map fst (extractArgCprAndTermination args)
 
 lubCprType :: CprType -> CprType -> CprType
 lubCprType ty1@(CprType n1 cpr1 term1) ty2@(CprType n2 cpr2 term2)
-  -- The arity of bottom CPR types can be extended arbitrarily.
-  | isUltimatelyBotCprType ty1 && (n1 <= n2) = ty2
-  | isUltimatelyBotCprType ty2 && (n2 <= n1) = ty1
+  -- Note that argument demands are handled contravariantly, hence glbArgStr
+  -- The arity of bottom types can be extended arbitrarily (by strTop).
+  | isUltimatelyBotCprType ty1 && (n1 `leLength` n2) = glbArgs ty2 n1
+  | isUltimatelyBotCprType ty2 && (n2 `leLength` n1) = glbArgs ty1 n2
   -- There might be non-bottom CPR types with mismatching arities.
   -- Consider test DmdAnalGADTs. We want to return topCpr in these cases.
   -- But at the same time, we have to preserve strictness obligations wrt.
   -- Termination. Returning topCprType is a safe default.
-  | n1 == n2
-  = CprType n1 (lubCpr cpr1 cpr2) (lubTerm term1 term2)
+  | n1 `equalLength` n2
+  = CprType (zipWith glbArgStr n1 n2) (lubCpr cpr1 cpr2) (lubTerm term1 term2)
   | otherwise
   = topCprType
+  where
+    glbArgs ty args = ty { ct_args = zipWith glbArgStr (ct_args ty) (args ++ repeat strTop) }
 
-applyCprTy :: CprType -> CprType
-applyCprTy ty@(CprType 0 _ _)
-  | ty == botCprType = botCprType
-  | otherwise        = topCprType
-applyCprTy (CprType n cpr term)
-  = CprType (n-1) cpr term
+applyCprTy :: CprType -> (ArgStr, CprType)
+applyCprTy ty@(CprType [] _ _)
+  | ty == botCprType = (strTop, botCprType)
+  | otherwise        = (strBot, topCprType)
+applyCprTy (CprType (a:args) cpr term)
+  = (a, CprType args cpr term)
 
-abstractCprTy :: CprType -> CprType
-abstractCprTy = abstractCprTyNTimes 1
+abstractCprTy :: ArgStr -> CprType -> CprType
+abstractCprTy = abstractCprTyNTimes . (:[])
 
-abstractCprTyNTimes :: Arity -> CprType -> CprType
+abstractCprTyNTimes :: [ArgStr] -> CprType -> CprType
 abstractCprTyNTimes n ty@(CprType m cpr term)
   | isTopCprType ty = topCprType
-  | otherwise       = CprType (n+m) cpr term
+  | otherwise       = CprType (n++m) cpr term
 
 ensureCprTyArity :: Arity -> CprType -> CprType
 ensureCprTyArity n ty@(CprType m _ _)
-  | n == m    = ty
-  | otherwise = topCprType
+  | m `lengthIs` n = ty
+  | otherwise      = topCprType
 
 trimCprTy :: Bool -> Bool -> CprType -> CprType
 trimCprTy trim_all trim_sums (CprType arty cpr term)
@@ -373,12 +377,13 @@ forceCprTy arg_str ty = force_term_ty (toStrDmd arg_str) ty
   where
     force_term_ty :: (Str (), StrDmd) -> CprType -> (TerminationFlag, CprType)
     force_term_ty (Lazy, _) ty = (botTermFlag, ty)
-    force_term_ty (_, str) (CprType 0 cpr term) = (flag, CprType 0 cpr term')
+    force_term_ty (_, str) (CprType [] cpr term) = (flag, CprType [] cpr term')
       where
         (flag, term') = forceTerm (Str str) term
-    force_term_ty (_, str) ty = (flag, abstractCprTy ty')
+    force_term_ty (_, str) ty = (flag, abstractCprTy arg ty_forced)
       where
-        (flag, ty') = force_term_ty (swap (peelStrCall str)) (applyCprTy ty)
+        (arg, ty_applied) = applyCprTy ty
+        (flag, ty_forced) = force_term_ty (swap (peelStrCall str)) ty_applied
 
 forceTerm :: ArgStr -> Termination -> (TerminationFlag, Termination)
 forceTerm arg_str (Termination l) = (flag, Termination l')
