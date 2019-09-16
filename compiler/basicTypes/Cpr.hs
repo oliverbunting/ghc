@@ -8,7 +8,7 @@ module Cpr (
     CprType (..), topCprType, botCprType, prodCprType, sumCprType, pruneDeepCpr,
     pruneDeepTerm, markProdCprType, markSumCprType, lubCprType, applyCprTy,
     abstractCprTy, abstractCprTyNTimes, ensureCprTyArity, trimCprTy, forceCprTy,
-    forceTerm, bothCprType
+    forceTerm, bothCprType, cprTransformDataConSig, argCprTypesFromStrictSig
   ) where
 
 #include "HsVersions.h"
@@ -17,6 +17,8 @@ import GhcPrelude
 
 import BasicTypes
 import Demand
+import DataCon
+import TyCon (isProductTyCon)
 import Outputable
 import Binary
 import Util
@@ -420,6 +422,51 @@ bothCprType :: CprType -> TerminationFlag -> CprType
 -- If tm = MightDiverge, it will only set the WHNF layer to MightDiverge,
 -- leaving nested termination info (e.g. on product components) intact.
 bothCprType ct tm = ct { ct_term = ct_term ct `lubTerm` deepTerm tm }
+
+-- | Get a 'CprType' for a 'DataCon', given 'CprType's for its fields.
+cprTransformDataConSig :: DataCon -> [CprType] -> CprType
+cprTransformDataConSig con args
+  | null (dataConExTyCoVars con)  -- No existentials
+  , wkr_arity > 0
+  , wkr_arity <= mAX_CPR_SIZE
+  , args `lengthIs` wkr_arity
+  , pprTrace "cprTransformDataConSig" (ppr con <+> ppr wkr_arity <+> ppr args) True
+  = abstractCprTyNTimes arg_strs $ data_con_cpr_ty args
+  | otherwise -- TODO: Refl binds a coercion. What about these? can we CPR them? I don't see why we couldn't.
+  = topCprType
+  where
+    tycon     = dataConTyCon con
+    wkr_arity = dataConRepArity con
+    arg_strs  = take wkr_arity (repeat strTop) -- worker is all lazy
+    -- Note how we don't handle unlifted args here. That's OK by the let/app
+    -- invariant, which specifies that the things we forget to force are ok for
+    -- speculation, so exactly what we mean by Terminates.
+    data_con_cpr_ty args
+      | isProductTyCon tycon = prodCprType args
+      | otherwise            = sumCprType (dataConTag con) args
+
+    mAX_CPR_SIZE :: Arity
+    mAX_CPR_SIZE = 10
+    -- We do not treat very big tuples as CPR-ish:
+    --      a) for a start we get into trouble because there aren't
+    --         "enough" unboxed tuple types (a tiresome restriction,
+    --         but hard to fix),
+    --      b) more importantly, big unboxed tuples get returned mainly
+    --         on the stack, and are often then allocated in the heap
+    --         by the caller.  So doing CPR for them may in fact make
+    --         things worse.
+
+-- | Produces 'CprType's the termination info of which match the given
+-- strictness signature. Examples:
+--
+--   - A head-strict demand @S@ would translate to @#@, a
+--   - A tuple demand @S(S,L)@ would translate to @#(#,*)@
+--   - A call demand @C(S)@ would translate to @strTop -> #(#,*)@
+argCprTypesFromStrictSig :: StrictSig -> [CprType]
+argCprTypesFromStrictSig sig = arg_tys
+  where
+    arg_strs = map getStrDmd (fst (splitStrictSig sig))
+    arg_tys  = zipWith ((snd .) . forceCprTy) arg_strs (repeat topCprType)
 
 ---------------
 -- * Outputable

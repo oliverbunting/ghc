@@ -29,7 +29,7 @@ import TysWiredIn       ( tupleDataCon )
 import TysPrim          ( voidPrimTy )
 import Literal          ( absentLiteralOf, rubbishLit )
 import VarEnv           ( mkInScopeSet )
-import VarSet           ( VarSet )
+import VarSet
 import Type
 import RepType          ( isVoidTy, typePrimRep )
 import Coercion
@@ -1103,9 +1103,9 @@ mkWWcpr_build (arg_vars, con_app, decon) = do
       arg_tys     = map idType arg_vars
       ubx_tup_app = mkCoreUbxTup arg_tys (map varToCoreExpr arg_vars)
       ubx_tup_ty  = exprType ubx_tup_app
+      wrap_alt    = (DataAlt (tupleDataCon Unboxed (length arg_tys)), arg_vars, con_app)
 
-  return ( \ wkr_call -> Case wkr_call wrap_wild (exprType con_app)
-                           [(DataAlt (tupleDataCon Unboxed (length arg_tys)), arg_vars, con_app)]
+  return ( \ wkr_call -> Case wkr_call wrap_wild (exprType con_app) [wrap_alt]
          , \ body     -> decon body ubx_tup_app
          , ubx_tup_ty )
 

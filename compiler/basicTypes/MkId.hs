@@ -411,7 +411,6 @@ mkDictSelId name clas
     base_info = noCafIdInfo
                 `setArityInfo`          1
                 `setStrictnessInfo`     strict_sig
-                -- `setTermInfo`           whnfTerm -- Nope, depends on impl
                 `setLevityInfoWithType` sel_ty
 
     info | new_tycon
@@ -625,6 +624,8 @@ mkDataConRep dflags fam_envs wrap_name mb_bangs data_con
                          `setInlinePragInfo`    wrap_prag
                          `setUnfoldingInfo`     wrap_unf
                          `setStrictnessInfo`    wrap_sig
+                         `setCprInfo`           wrap_cpr
+                         `setTermInfo`          wrap_term
                              -- We need to get the CAF info right here because TidyPgm
                              -- does not tidy the IdInfo of implicit bindings (like the wrapper)
                              -- so it not make sure that the CAF info is sane
@@ -632,13 +633,25 @@ mkDataConRep dflags fam_envs wrap_name mb_bangs data_con
 
              wrap_sig = mkClosedStrictSig wrap_arg_dmds topDiv
 
+             -- Don't forget the dictionary arguments when building the
+             -- strictness signature (#14290). Notably, this does not include
+             -- eq_spec, because they are generated inside the wrapper.
              wrap_arg_dmds =
                replicate (length theta) topDmd ++ map mk_dmd arg_ibangs
-               -- Don't forget the dictionary arguments when building
-               -- the strictness signature (#14290).
 
              mk_dmd str | isBanged str = evalDmd
-                        | otherwise           = topDmd
+                        | otherwise    = topDmd
+
+             -- We can't easily translate the CprTypes derived from the
+             -- strictness signature (which are wrt. to the wrapper) to argument
+             -- types of the CprType of the returned application of the worker.
+             -- So we just assume Top for all of them. TODO: Analyse RHS
+             work_arg_cpr_tys = replicate (dataConRepArity data_con) topCprType
+             wrap_cpr_ty      = cprTransformDataConSig data_con work_arg_cpr_tys
+             -- The ct_args part is implicit in the strictness signature.
+             -- See {get,set}_idCprType in DmdAnal.
+             wrap_cpr    = ct_cpr wrap_cpr_ty
+             wrap_term   = ct_term wrap_cpr_ty
 
              wrap_prag = alwaysInlinePragma `setInlinePragmaActivation`
                          activeDuringFinal

@@ -15,7 +15,8 @@ T3717.$trModule4 = "main"#
 T3717.$trModule3 :: GHC.Types.TrName
 [GblId,
  Caf=NoCafRefs,
- Cpr=m1,
+ Term=#,
+ Cpr=1(-),
  Unf=Unf{Src=<vanilla>, TopLvl=True, Value=True, ConLike=True,
          WorkFree=True, Expandable=True, Guidance=IF_ARGS [] 10 20}]
 T3717.$trModule3 = GHC.Types.TrNameS T3717.$trModule4
@@ -32,7 +33,8 @@ T3717.$trModule2 = "T3717"#
 T3717.$trModule1 :: GHC.Types.TrName
 [GblId,
  Caf=NoCafRefs,
- Cpr=m1,
+ Term=#,
+ Cpr=1(-),
  Unf=Unf{Src=<vanilla>, TopLvl=True, Value=True, ConLike=True,
          WorkFree=True, Expandable=True, Guidance=IF_ARGS [] 10 20}]
 T3717.$trModule1 = GHC.Types.TrNameS T3717.$trModule2
@@ -41,7 +43,8 @@ T3717.$trModule1 = GHC.Types.TrNameS T3717.$trModule2
 T3717.$trModule :: GHC.Types.Module
 [GblId,
  Caf=NoCafRefs,
- Cpr=m,
+ Term=#(#, #),
+ Cpr=(1(-), 1(-)),
  Unf=Unf{Src=<vanilla>, TopLvl=True, Value=True, ConLike=True,
          WorkFree=True, Expandable=True, Guidance=IF_ARGS [] 10 30}]
 T3717.$trModule
@@ -66,7 +69,8 @@ foo [InlPrag=NOUSERINLINE[2]] :: Int -> Int
  Arity=1,
  Caf=NoCafRefs,
  Str=<S(S),1*U(1*U)>,
- Cpr=m,
+ Term=*(#),
+ Cpr=(-),
  Unf=Unf{Src=InlineStable, TopLvl=True, Value=True, ConLike=True,
          WorkFree=True, Expandable=True,
          Guidance=ALWAYS_IF(arity=1,unsat_ok=True,boring_ok=False)

@@ -185,40 +185,6 @@ cprTransform env args id
       | otherwise
       = topCprType
 
--- TODO: Much of this is duplicated from MkId.dataConCPR
-cprTransformDataConSig :: DataCon -> [CprType] -> CprType
-cprTransformDataConSig con args
-  | null (dataConExTyCoVars con)  -- No existentials
-  , wkr_arity > 0
-  , wkr_arity <= mAX_CPR_SIZE
-  , args `lengthIs` wkr_arity
-  -- , pprTrace "cprTransformDataConSig" (ppr con <+> ppr wkr_arity <+> ppr args) True
-  = abstractCprTyNTimes arg_strs $ data_con_cpr_ty args
-  | otherwise
-  = topCprType
-  where
-    tycon     = dataConTyCon con
-    wkr_arity = dataConRepArity con
-    arg_strs  = take wkr_arity (repeat strTop) -- worker is all lazy
-    -- Note how we don't handle unlifted args here. That's OK by the let/app
-    -- invariant, which specifies that the things we forget to force are ok for
-    -- speculation, so exactly what we mean by Terminates.
-    data_con_cpr_ty args
-      | isProductTyCon tycon = prodCprType args
-      | otherwise            = sumCprType (dataConTag con) args
-
-    mAX_CPR_SIZE :: Arity
-    mAX_CPR_SIZE = 10
-    -- We do not treat very big tuples as CPR-ish:
-    --      a) for a start we get into trouble because there aren't
-    --         "enough" unboxed tuple types (a tiresome restriction,
-    --         but hard to fix),
-    --      b) more importantly, big unboxed tuples get returned mainly
-    --         on the stack, and are often then allocated in the heap
-    --         by the caller.  So doing CPR for them may in fact make
-    --         things worse.
-
-
 --
 -- * Bindings
 --
@@ -279,14 +245,12 @@ cprAnalBind
 cprAnalBind top_lvl env args id rhs
   = (id', rhs')
   where
-    arg_strs        = map getStrDmd (fst (splitStrictSig (idStrictness id)))
     -- We compute the Termination and CPR transformer based on the strictness
     -- signature. There is no point in pretending that an arg we are strict in
     -- could lead to non-termination, as the signature then trivially
     -- MightDiverge. Instead we assume that call sites make sure to force the
-    -- arguments appropriately and unleash the TerminationFlag (the fst
-    -- components below) there.
-    assumed_arg_tys = zipWith ((snd .) . forceCprTy) arg_strs (repeat topCprType)
+    -- arguments appropriately and unleash the TerminationFlag there.
+    assumed_arg_tys = argCprTypesFromStrictSig (idStrictness id)
 
     (rhs_ty, rhs')
       | isJoinId id = cprAnal env (args ++ assumed_arg_tys) rhs

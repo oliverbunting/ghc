@@ -1,13 +1,13 @@
 
 ==================== Strictness signatures ====================
-BottomFromInnerLambda.$trModule: #(#, #) (1, 1)
+BottomFromInnerLambda.$trModule: #(#, #) (1(-), 1(-))
 BottomFromInnerLambda.expensive: <S(S),1*U(U)> * (-)
 BottomFromInnerLambda.f: <S(S),1*U(U)> * -
 
 
 
 ==================== Strictness signatures ====================
-BottomFromInnerLambda.$trModule: #(#, #) (1, 1)
+BottomFromInnerLambda.$trModule: #(#, #) (1(-), 1(-))
 BottomFromInnerLambda.expensive: <S(S),1*U(1*U)> *(#) (-)
 BottomFromInnerLambda.f: <S(S),1*U(1*U)> * -
 
