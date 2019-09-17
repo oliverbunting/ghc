@@ -15,7 +15,8 @@ NatVal.$trModule4 = "main"#
 NatVal.$trModule3 :: GHC.Types.TrName
 [GblId,
  Caf=NoCafRefs,
- Cpr=m1,
+ Term=#,
+ Cpr=1(-),
  Unf=Unf{Src=<vanilla>, TopLvl=True, Value=True, ConLike=True,
          WorkFree=True, Expandable=True, Guidance=IF_ARGS [] 10 20}]
 NatVal.$trModule3 = GHC.Types.TrNameS NatVal.$trModule4
@@ -32,7 +33,8 @@ NatVal.$trModule2 = "NatVal"#
 NatVal.$trModule1 :: GHC.Types.TrName
 [GblId,
  Caf=NoCafRefs,
- Cpr=m1,
+ Term=#,
+ Cpr=1(-),
  Unf=Unf{Src=<vanilla>, TopLvl=True, Value=True, ConLike=True,
          WorkFree=True, Expandable=True, Guidance=IF_ARGS [] 10 20}]
 NatVal.$trModule1 = GHC.Types.TrNameS NatVal.$trModule2
@@ -41,7 +43,8 @@ NatVal.$trModule1 = GHC.Types.TrNameS NatVal.$trModule2
 NatVal.$trModule :: GHC.Types.Module
 [GblId,
  Caf=NoCafRefs,
- Cpr=m,
+ Term=#(#, #),
+ Cpr=(1(-), 1(-)),
  Unf=Unf{Src=<vanilla>, TopLvl=True, Value=True, ConLike=True,
          WorkFree=True, Expandable=True, Guidance=IF_ARGS [] 10 30}]
 NatVal.$trModule
