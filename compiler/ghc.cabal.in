@@ -556,6 +556,7 @@ Library
         Fingerprint
         FiniteMap
         FV
+        FreeVarStrategy
         GraphBase
         GraphColor
         GraphOps
