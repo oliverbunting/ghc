@@ -63,6 +63,8 @@ import qualified GHC.LanguageExtensions as LangExt
 import Control.Monad (when, forM_, zipWithM)
 import Data.Bifunctor (first)
 import Data.List (elemIndex)
+import Data.Array (Array)
+import qualified Data.Array as Array
 import qualified Data.Semigroup as Semi
 
 {-
@@ -181,9 +183,9 @@ instance Monoid Precision where
 type CheckResult = CheckResult' DigestedTree
 data CheckResult' a
   = CheckResult
-  { cr_clauses :: a
-  , cr_uncov  :: Uncovered
-  , cr_approx :: Precision
+  { cr_clauses :: !a
+  , cr_uncov   :: !Uncovered
+  , cr_approx  :: !Precision
   }
 
 instance Outputable a => Outputable (CheckResult' a) where
@@ -193,26 +195,26 @@ instance Outputable a => Outputable (CheckResult' a) where
 data ClauseTree a
   = Rhs !(Located SDoc)
   -- ^ SDoc for the equation to show, Located for the location
-  | Many [a]
+  | Many !(Array Int a)
 
 instance (Outputable a) => Outputable (ClauseTree a) where
   ppr (Rhs sdoc) = ppr sdoc
-  ppr (Many cs)  = nest 2 $ vcat (map ppr cs)
+  ppr (Many cs)  = nest 2 $ vcat $ map ppr $ Array.elems cs
 
 data GrdTree
-  = Guard PmGrd GrdTree
-  | GrdTree (ClauseTree GrdTree)
+  = Guard !PmGrd !GrdTree
+  | GrdTree !(ClauseTree GrdTree)
 
 data CtTree
-  = DivergeIf PmCt CtTree
-  | FallThroughIf PmCt CtTree
-  | Refine PmCt CtTree
-  | CtTree (ClauseTree CtTree)
+  = DivergeIf !PmCt !CtTree
+  | FallThroughIf !PmCt !CtTree
+  | Refine !PmCt !CtTree
+  | CtTree !(ClauseTree CtTree)
 
 data DigestedTree
-  = Diverges DigestedTree
-  | Inaccessible DigestedTree
-  | DigestedTree (ClauseTree DigestedTree)
+  = Diverges !DigestedTree
+  | Inaccessible !DigestedTree
+  | DigestedTree !(ClauseTree DigestedTree)
 
 instance Outputable GrdTree where
   ppr (Guard grd t) = ppr grd <+> ppr t
@@ -604,7 +606,9 @@ mkGrdTreeRhs :: Located SDoc -> GrdVec -> GrdTree
 mkGrdTreeRhs sdoc = foldr Guard (GrdTree (Rhs sdoc))
 
 mkGrdTreeMany :: GrdVec -> [GrdTree] -> GrdTree
-mkGrdTreeMany grds trees = foldr Guard (GrdTree (Many trees)) grds
+mkGrdTreeMany grds trees = foldr Guard root grds
+  where
+    root = GrdTree (Many (Array.listArray (0, length trees-1) trees))
 
 -- Translate a single match
 translateMatch :: FamInstEnvs -> [Id] -> LMatch GhcTc (LHsExpr GhcTc)
@@ -923,7 +927,7 @@ conMatchForces _                 = True
 --     'DivergeIf' and 'FallthroughIf' for 'PmBang' and 'PmCon'.
 compileGrdTree :: GrdTree -> CtTree
 compileGrdTree (GrdTree (Rhs sdoc))   = CtTree (Rhs sdoc)
-compileGrdTree (GrdTree (Many trees)) = CtTree (Many (map compileGrdTree trees))
+compileGrdTree (GrdTree (Many trees)) = CtTree (Many (compileGrdTree <$> trees))
 compileGrdTree (Guard grd t)          = compile grd (compileGrdTree t)
   where
     compile :: PmGrd -> CtTree -> CtTree
@@ -982,7 +986,8 @@ checkCtTree' (CtTree (Many ct_trees)) deltas = do
         CheckResult c' unc prec' <- checkCtTree ct_tree deltas
         pure $ CheckResult (c':cs') unc (prec Semi.<> prec')
   res@CheckResult{ cr_clauses = cs' } <- foldlM go init_res ct_trees
-  pure res{ cr_clauses = DigestedTree (Many (reverse cs')) }
+  let cs_array = Array.listArray (Array.bounds ct_trees) (reverse cs')
+  pure res{ cr_clauses = DigestedTree (Many cs_array) }
 -- divergence: Wrap Diverges around the inner cr_clauses if the diverging
 --             constraint is satisfiable
 checkCtTree' (DivergeIf div_ct ct_tree) deltas = do
