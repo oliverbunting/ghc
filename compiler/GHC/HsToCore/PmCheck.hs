@@ -61,7 +61,6 @@ import Maybes
 import qualified GHC.LanguageExtensions as LangExt
 
 import Control.Monad (when, forM_, zipWithM)
-import Data.Bifunctor (first)
 import Data.List (elemIndex)
 import Data.Array (Array)
 import qualified Data.Array as Array
@@ -205,12 +204,6 @@ data GrdTree
   = Guard !PmGrd !GrdTree
   | GrdTree !(ClauseTree GrdTree)
 
-data CtTree
-  = DivergeIf !PmCt !CtTree
-  | FallThroughIf !PmCt !CtTree
-  | Refine !PmCt !CtTree
-  | CtTree !(ClauseTree CtTree)
-
 data DigestedTree
   = Diverges !DigestedTree
   | Inaccessible !DigestedTree
@@ -219,12 +212,6 @@ data DigestedTree
 instance Outputable GrdTree where
   ppr (Guard grd t) = ppr grd <+> ppr t
   ppr (GrdTree t)   = ppr t
-
-instance Outputable CtTree where
-  ppr (DivergeIf     ct t) = char '⚡' <> parens (ppr ct) <+> ppr t
-  ppr (FallThroughIf ct t) = char '↴' <> parens (ppr ct) <+> ppr t
-  ppr (Refine        ct t) = ppr ct <+> ppr t
-  ppr (CtTree           t) = ppr t
 
 instance Outputable DigestedTree where
   ppr (Diverges     t) = char '⚡' <> ppr t
@@ -275,7 +262,7 @@ checkSingle' locn var p = do
   tracePm "checkSingle': missing" (ppr missing)
   fam_insts <- dsGetFamInstEnvs
   grd_tree  <- mkGrdTreeRhs (L locn $ ppr p) <$> translatePat fam_insts var p
-  checkCtTree (compileGrdTree grd_tree) missing
+  checkGrdTree grd_tree missing
 
 -- | Exhaustive for guard matches, is used for guards in pattern bindings and
 -- in @MultiIf@ expressions.
@@ -317,7 +304,7 @@ checkMatches' vars matches = do
   tracePm "checkMatches': missing" (ppr missing)
   fam_insts <- dsGetFamInstEnvs
   grd_tree  <- mkGrdTreeMany [] <$> mapM (translateMatch fam_insts vars) matches
-  checkCtTree (compileGrdTree grd_tree) missing
+  checkGrdTree grd_tree missing
 
 
 {- Note [Checking EmptyCase]
@@ -882,18 +869,13 @@ brows.
 {-
 %************************************************************************
 %*                                                                      *
-            Heart of the algorithm: checkCtTree
+            Heart of the algorithm: checkGrdTree
 %*                                                                      *
 %************************************************************************
 
 Main functions are:
 
-* compileGrdTree :: GrdTree -> CtTree
-
-  Translates from the scoped, higher-level 'GrdTree' with fall-through semantics
-  to the lower-level 'CtTree'.
-
-* checkCtTree :: CtTree -> Deltas -> DsM CheckResult
+* checkGrdTree :: GrdTree -> Deltas -> DsM CheckResult
 
   Walks down the spine of the 'CtTree', continually collecting and checking
   constraints for satisfiability, ultimately digesting results into annotations
@@ -923,93 +905,59 @@ conMatchForces _                 = True
 --   * The semantics of 'PmGrd' permit "failure" (of a guard) and "divergence".
 --     'PmCt' doesn't have that notion: It's just a constraint that may or may
 --     not be compatible with a set of other constraints. Consequently, to map
---     the fall-through semantics of 'PmGrd', 'compileGrdTree' introduces
+--     the fall-through semantics of 'PmGrd', 'checkGrdTree' introduces
 --     'DivergeIf' and 'FallthroughIf' for 'PmBang' and 'PmCon'.
-compileGrdTree :: GrdTree -> CtTree
-compileGrdTree (GrdTree (Rhs sdoc))   = CtTree (Rhs sdoc)
-compileGrdTree (GrdTree (Many trees)) = CtTree (Many (compileGrdTree <$> trees))
-compileGrdTree (Guard grd t)          = compile grd (compileGrdTree t)
-  where
-    compile :: PmGrd -> CtTree -> CtTree
-    -- let x = e: Refine with x ~ e
-    compile (PmLet x e) = Refine (PmCoreCt x e)
-    -- Bang x: Diverge on x ~ ⊥, refine with x /~ ⊥
-    compile (PmBang x) = DivergeIf (PmBotCt x) . Refine (PmNotBotCt x)
-    -- Con: Diverge on x ~ ⊥, fall through on x /~ K and refine with x ~ K ys
-    --      and type info
-    compile (PmCon x con dicts args)
-      -- See Note [Divergence of Newtype matches] in Oracle.
-      = applyWhen (conMatchForces con) (DivergeIf (PmBotCt x))
-      . FallThroughIf (PmNotConCt x con)
-      . flip (foldr (Refine . PmTyCt . evVarPred)) dicts
-      . Refine (PmConCt x con args)
-
--- | Print diagnostic info and actually call 'checkCtTree''.
-checkCtTree :: CtTree -> Deltas -> DsM CheckResult
-checkCtTree guards deltas = do
-  tracePm "checkCtTree {" $ vcat [ ppr guards
-                             , ppr deltas ]
-  res <- checkCtTree' guards deltas
-  tracePm "}:" (ppr res) -- braces are easier to match by tooling
-  return res
-
-collectRefines :: CtTree -> (PmCts, CtTree)
-collectRefines (Refine ct t) = first (consBag ct) (collectRefines t)
-collectRefines t             = (emptyBag, t)
-
--- | Check a set of incoming values represented by 'Deltas' against a 'CtTree'.
--- The 'CtTree' conveniently carries all the 'PmCts' we have to add, so we just
--- walk down the tree and check for inhabitants when we have to. In particular,
--- we "have to", when:
---
---   * We have to come up with a 'Diverged' flag for a 'Branch'
---   * We have to come up with a 'Covered' flag when we are 'AtRhs'.
---
--- The structure of the 'CtTree' is so that we can have the maximum amount of
--- caching of oracle work without thinking too hard. The only tricky part is
--- threading around the uncovered set in 'Branch'.
-checkCtTree'
-  :: CtTree -- ^ Equations
-  -> Deltas -- ^ Incoming uncovered values
-  -> DsM CheckResult
+checkGrdTree' :: GrdTree -> Deltas -> DsM CheckResult
 -- RHS: Check that it covers something and wrap Inaccessible if not
-checkCtTree' (CtTree (Rhs sdoc)) deltas = do
+checkGrdTree' (GrdTree (Rhs sdoc)) deltas = do
   is_covered <- isInhabited deltas
   pure CheckResult
     { cr_clauses = applyWhen (not is_covered) Inaccessible (DigestedTree (Rhs sdoc))
     , cr_uncov   = MkDeltas emptyBag
     , cr_approx  = Precise }
--- Many: Thread augmented uncovered sets from equation to equation
-checkCtTree' (CtTree (Many ct_trees)) deltas = do
+-- Many: Thread residual uncovered sets from equation to equation
+checkGrdTree' (GrdTree (Many trees)) deltas = do
   let init_res = CheckResult [] deltas Precise
-  let go (CheckResult cs' deltas prec) ct_tree = do
-        CheckResult c' unc prec' <- checkCtTree ct_tree deltas
+  let go (CheckResult cs' deltas prec) grd_tree = do
+        CheckResult c' unc prec' <- checkGrdTree' grd_tree deltas
         pure $ CheckResult (c':cs') unc (prec Semi.<> prec')
-  res@CheckResult{ cr_clauses = cs' } <- foldlM go init_res ct_trees
-  let cs_array = Array.listArray (Array.bounds ct_trees) (reverse cs')
+  res@CheckResult{ cr_clauses = cs' } <- foldlM go init_res trees
+  let cs_array = Array.listArray (Array.bounds trees) (reverse cs')
   pure res{ cr_clauses = DigestedTree (Many cs_array) }
--- divergence: Wrap Diverges around the inner cr_clauses if the diverging
---             constraint is satisfiable
-checkCtTree' (DivergeIf div_ct ct_tree) deltas = do
-  has_diverged <- addPmCtsDeltas deltas (unitBag (div_ct)) >>= isInhabited
-  res <- checkCtTree' ct_tree deltas
+-- let x = e: Refine with x ~ e
+checkGrdTree' (Guard (PmLet x e) tree) deltas = do
+  deltas' <- addPmCtsDeltas deltas (unitBag (PmCoreCt x e))
+  checkGrdTree' tree deltas'
+-- Bang x: Diverge on x ~ ⊥, refine with x /~ ⊥
+checkGrdTree' (Guard (PmBang x) tree) deltas = do
+  has_diverged <- addPmCtsDeltas deltas (unitBag (PmBotCt x)) >>= isInhabited
+  res <- checkGrdTree' tree deltas
   pure res{ cr_clauses = applyWhen has_diverged Diverges (cr_clauses res) }
--- fall-through: Thread uncovered values around the inner clauses
-checkCtTree' (FallThroughIf unc_ct ct_tree) deltas = do
-  unc_this <- addPmCtsDeltas deltas (unitBag (unc_ct))
-  CheckResult dig_tree' unc_inner prec <- checkCtTree' ct_tree deltas
+-- Con: Diverge on x ~ ⊥, fall through on x /~ K and refine with x ~ K ys
+--      and type info
+checkGrdTree' (Guard (PmCon x con dicts args) tree) deltas = do
+  has_diverged <-
+    if conMatchForces con
+      then addPmCtsDeltas deltas (unitBag (PmBotCt x)) >>= isInhabited
+      else pure False
+  unc_this <- addPmCtsDeltas deltas (unitBag (PmNotConCt x con))
+  deltas' <- addPmCtsDeltas deltas (listToBag (PmTyCt . evVarPred <$> dicts) `snocBag` PmConCt x con args)
+  CheckResult dig_tree' unc_inner prec <- checkGrdTree' tree deltas'
   limit <- maxPmCheckModels <$> getDynFlags
   let (prec', unc') = throttle limit deltas (unc_this Semi.<> unc_inner)
   pure CheckResult
-    { cr_clauses = dig_tree'
+    { cr_clauses = applyWhen has_diverged Diverges dig_tree'
     , cr_uncov = unc'
     , cr_approx = prec Semi.<> prec' }
--- refinement: Just add the refinement constraint
---             There's a twist: Add a sequence of refinements in one go, to save
---             repeated initialisation of the type oracle.
-checkCtTree' t@Refine{} deltas | (cts, ct_tree) <- collectRefines t = do
-  deltas' <- addPmCtsDeltas deltas cts
-  checkCtTree' ct_tree deltas'
+
+-- | Print diagnostic info and actually call 'checkGrdTree''.
+checkGrdTree :: GrdTree -> Deltas -> DsM CheckResult
+checkGrdTree guards deltas = do
+  tracePm "checkGrdTree {" $ vcat [ ppr guards
+                             , ppr deltas ]
+  res <- checkGrdTree' guards deltas
+  tracePm "}:" (ppr res) -- braces are easier to match by tooling
+  return res
 
 -- ----------------------------------------------------------------------------
 -- * Propagation of term constraints inwards when checking nested matches
