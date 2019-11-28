@@ -89,7 +89,7 @@ module OccName (
         OccSet, emptyOccSet, unitOccSet, mkOccSet, extendOccSet,
         extendOccSetList,
         unionOccSets, unionManyOccSets, minusOccSet, elemOccSet,
-        isEmptyOccSet, intersectOccSet, intersectsOccSet,
+        isEmptyOccSet, intersectOccSet, intersectsOccSet, disjointOccSet,
         filterOccSet,
 
         -- * Tidying up
@@ -453,6 +453,7 @@ minusOccSet       :: OccSet -> OccSet -> OccSet
 elemOccSet        :: OccName -> OccSet -> Bool
 isEmptyOccSet     :: OccSet -> Bool
 intersectOccSet   :: OccSet -> OccSet -> OccSet
+disjointOccSet    :: OccSet -> OccSet -> Bool
 intersectsOccSet  :: OccSet -> OccSet -> Bool
 filterOccSet      :: (OccName -> Bool) -> OccSet -> OccSet
 
@@ -467,7 +468,8 @@ minusOccSet       = minusUniqSet
 elemOccSet        = elementOfUniqSet
 isEmptyOccSet     = isEmptyUniqSet
 intersectOccSet   = intersectUniqSets
-intersectsOccSet s1 s2 = not (isEmptyOccSet (s1 `intersectOccSet` s2))
+disjointOccSet    = disjointUniqSets
+intersectsOccSet s1 s2 = not (s1 `disjointOccSet` s2)
 filterOccSet      = filterUniqSet
 
 {-

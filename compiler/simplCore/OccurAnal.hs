@@ -1289,7 +1289,7 @@ mkLoopBreakerNodes env lvl bndr_set body_uds details_s
       = [ (b, trimmed_rule_fvs)
         | ND { nd_bndr = b, nd_active_rule_fvs = rule_fvs } <- details_s
         , let trimmed_rule_fvs = rule_fvs `intersectVarSet` bndr_set
-        , not (isEmptyVarSet trimmed_rule_fvs) ]
+        , not (isEmptyVarSet trimmed_rule_fvs) ] -- TODO: Use disjoint instead!?
 
 
 ------------------------------------------

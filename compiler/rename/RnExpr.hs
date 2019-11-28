@@ -1352,7 +1352,7 @@ glomSegments ctxt ((defs,uses,fwds,stmt) : segs)
         = (reverse yeses, reverse noes)
         where
           (noes, yeses)           = span not_needed (reverse dus)
-          not_needed (defs,_,_,_) = not (intersectsNameSet defs uses)
+          not_needed (defs,_,_,_) = disjointNameSet defs uses
 
 ----------------------------------------------------
 segsToStmts :: Stmt GhcRn body
