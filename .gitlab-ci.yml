@@ -18,6 +18,7 @@ before_script:
   - "git fetch https://gitlab.haskell.org/ghc/ghc-performance-notes.git refs/notes/perf:refs/notes/perf || true"
 
 stages:
+  - schildkroete
   - lint        # Source linting
   - quick-build # A very quick smoke-test to weed out broken commits
   - build       # A quick smoke-test to weed out broken commits
@@ -223,7 +224,7 @@ lint-release-changelogs:
       - ghc.tar.xz
       - junit.xml
 
-.validate-linux-hadrian:
+.validate-linux-deb9-hadrian:
   extends: .validate-hadrian
   image: "registry.gitlab.haskell.org/ghc/ci-images/x86_64-linux-deb9:$DOCKER_REV"
   variables:
@@ -239,15 +240,24 @@ lint-release-changelogs:
     - x86_64-linux
 
 validate-x86_64-linux-deb9-hadrian:
-  extends: .validate-linux-hadrian
+  extends: .validate-linux-deb9-hadrian
   stage: build
 
 validate-x86_64-linux-deb9-unreg-hadrian:
-  extends: .validate-linux-hadrian
+  extends: .validate-linux-deb9-hadrian
   stage: full-build
   variables:
     CONFIGURE_ARGS: --enable-unregisterised
     TEST_ENV: "x86_64-linux-deb9-unreg-hadrian"
+
+# See Note [ThreadSanitizer] in includes/rts/TSANUtils.h
+nightly-x86_64-linux-deb9-tsan:
+  extends: .validate-linux-deb9-hadrian
+  stage: full-build
+  variables:
+    TEST_ENV: "x86_64-linux-deb9-tsan"
+    FLAVOUR: "thread-sanitizer"
+    TSAN_OPTIONS: "suppressions=$CI_PROJECT_DIR/rts/tsan-suppressions"
 
 hadrian-ghc-in-ghci:
   <<: *only-default
@@ -286,6 +296,7 @@ hadrian-ghc-in-ghci:
   <<: *only-default
   variables:
     TEST_TYPE: test
+    RTS_HC_OPTS: ""
   before_script:
     - git clean -xdf && git submodule foreach git clean -xdf
   script:
@@ -293,7 +304,7 @@ hadrian-ghc-in-ghci:
     - ./configure $CONFIGURE_ARGS
     - |
       THREADS=`mk/detect-cpu-count.sh`
-      make V=0 -j$THREADS WERROR=-Werror
+      make V=0 -j$THREADS WERROR=-Werror GhcRtsHcOpts=$RTS_HC_OPTS
     - make binary-dist-prep TAR_COMP_OPTS="-1"
     - make test_bindist TEST_PREP=YES
     - |
@@ -610,6 +621,13 @@ nightly-x86_64-linux-deb9-integer-simple:
   only:
     variables:
       - $NIGHTLY
+
+nightly-x86_64-linux-deb9-tsan:
+  extends: .build-x86_64-linux-deb9
+  stage: schildkroete
+  variables:
+    TEST_ENV: "x86_64-linux-deb9-tsan"
+    FLAVOUR: "thread-sanitizer"
 
 release-x86_64-linux-deb9-dwarf:
   extends: .validate-linux
