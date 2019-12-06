@@ -268,7 +268,14 @@ rnSpliceGen run_splice pend_splice splice
                 ; writeMutVar ps_var (pending_splice : ps)
                 ; return (result, fvs) }
 
-        _ ->  do { (splice', fvs1) <- checkNoErrs $
+        _ ->  do { -- Nested splices are fine without TemplateHaskell because they
+                   -- are not executed until the top-level splice is run.
+                 ; thEnabled <- xoptM LangExt.TemplateHaskell
+                 ; unless thEnabled $
+                    failWith $
+                      text "Top-level splices are not permitted without TemplateHaskell"
+
+                  ; (splice', fvs1) <- checkNoErrs $
                                       setStage (Splice splice_type) $
                                       rnSplice splice
                    -- checkNoErrs: don't attempt to run the splice if
