@@ -270,10 +270,11 @@ rnSpliceGen run_splice pend_splice splice
 
         _ ->  do { -- Nested splices are fine without TemplateHaskell because they
                    -- are not executed until the top-level splice is run.
-                 ; thEnabled <- xoptM LangExt.TemplateHaskell
-                 ; unless thEnabled $
+                   let (herald, ext) = spliceExtension splice
+                 ; extEnabled <- xoptM ext
+                 ; unless extEnabled $
                     failWith $
-                      text "Top-level splices are not permitted without TemplateHaskell"
+                      text herald <+> text "are not permitted without" <+> ppr ext
 
                   ; (splice', fvs1) <- checkNoErrs $
                                       setStage (Splice splice_type) $
@@ -288,6 +289,12 @@ rnSpliceGen run_splice pend_splice splice
      splice_type = if is_typed_splice
                    then Typed
                    else Untyped
+
+     spliceExtension :: HsSplice GhcPs -> (String, LangExt.Extension)
+     spliceExtension (HsQuasiQuote {}) = ("Quasi-quotes", LangExt.QuasiQuotes)
+     spliceExtension (HsTypedSplice {}) = ("Top-level splices", LangExt.TemplateHaskell)
+     spliceExtension (HsUntypedSplice {}) = ("Top-level splices", LangExt.TemplateHaskell)
+     spliceExtension s = pprPanic "spliceExtension" (ppr s)
 
 ------------------
 
