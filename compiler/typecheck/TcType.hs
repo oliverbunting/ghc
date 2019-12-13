@@ -2456,14 +2456,24 @@ isNextArgVisible ty
 infixl 9 `disjointFromType`, `disjointFromCo`
 
 disjointFromType :: TyCoVarSet -> TcType -> Bool
--- (tcvs `disjointFromType` ty) returns True if ty would
--- be well-scoped if floated outside of the binding site of tcvs
--- This specifically includes coercion holes
+-- (skols `disjointFromType` ty) returns True if ty would
+-- be well-scoped if floated outside of the binding site of 'skols'
+-- The 'skols' are never meta-tyvars, but can include coercion holes
 disjointFromType bad ty
   = go ty
   where
-    go (TyVarTy tv)             = not (tv `elemVarSet` bad) &&
-                                  (not (isMetaTyVar tv) || go (tyVarKind tv))
+    go (TyVarTy tv)
+      | isMetaTyVar tv  = go (tyVarKind tv)
+                          -- Optional optimisation: check level to see if it's bound at
+                          --          the implication or outside
+                          -- (WantedInv) in Note [TcLevel and untouchable type variables]
+                          -- says it cannot have a level greater than the ambient level
+      | otherwise       = not (tv `elemVarSet` bad)
+          -- In skolem case, no need to look in the kind
+          -- case 1: tv bound outside skols, so skols cannot be in tv's kine
+          -- case 2: tv bound amoung skols, is bad anyway
+          -- case 3: tv bound by an inner forall; then we'll scan
+          --         its kind when dealing with the binder
     go (TyConApp _ tys)         = all go tys
     go (LitTy {})               = True
     go (AppTy fun arg)          = go fun && go arg
