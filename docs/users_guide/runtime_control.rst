@@ -351,7 +351,8 @@ performance.
     Under this collection strategy oldest-generation garbage collection
     can proceed concurrently with mutation.
 
-    Note that :rts-flag:`-xn` cannot be used with ``-G1`` nor :rts-flag:`-c`.
+    Note that :rts-flag:`-xn` cannot be used with ``-G1``,
+    :rts-flag:`profiling <-hc>` nor :rts-flag:`-c`.
 
 .. rts-flag:: -A ⟨size⟩
 
