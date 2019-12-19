@@ -16,7 +16,7 @@ import SrcLoc
 import ToIface
 import TyCon
 import TyCoRep
-import Type
+import Type hiding( foldType )
 import Var
 import VarEnv
 
